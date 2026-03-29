@@ -21,6 +21,12 @@ impl MemoryStorage {
     }
 }
 
+impl Default for MemoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Storage for MemoryStorage {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         self.map.get(key).cloned()

@@ -57,7 +57,7 @@ impl Daa {
         let mut next = (current_difficulty * adjustment).round() as u64;
 
         // Keep difficulty in safe bounds.
-        next = next.max(1).min(u64::MAX / 2);
+        next = next.clamp(1, u64::MAX / 2);
         next
     }
 }

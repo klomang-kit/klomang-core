@@ -1,5 +1,5 @@
 use crate::core::crypto::Hash;
-use crate::core::dag::dag::Dag;
+use crate::core::dag::Dag;
 use std::collections::HashSet;
 
 pub fn get_anticone(dag: &Dag, id: &Hash) -> Vec<Hash> {

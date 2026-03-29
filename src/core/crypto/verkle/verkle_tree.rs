@@ -90,8 +90,8 @@ impl<S: Storage> VerkleTree<S> {
         self.ensure_node(&path);
 
         // Ensure all nodes di path ada
-        for depth in 0..KEY_SIZE {
-            path.push(key[depth]);
+        for &byte in key.iter().take(KEY_SIZE) {
+            path.push(byte);
             self.ensure_node(&path);
         }
 
@@ -104,8 +104,10 @@ impl<S: Storage> VerkleTree<S> {
 
     /// Get root hash dengan incremental update optimization
     pub fn get_root(&mut self) -> [u8; 32] {
-        if !self.dirty && self.root_cache.is_some() {
-            return self.root_cache.unwrap();
+        if !self.dirty {
+            if let Some(root) = self.root_cache {
+                return root;
+            }
         }
 
         let root = self.compute_node_root_hash(&[], 0);
@@ -117,8 +119,8 @@ impl<S: Storage> VerkleTree<S> {
     /// Get value dengan key
     pub fn get(&self, key: [u8; KEY_SIZE]) -> Option<Vec<u8>> {
         let mut path = Vec::new();
-        for depth in 0..KEY_SIZE {
-            path.push(key[depth]);
+        for &byte in key.iter().take(KEY_SIZE) {
+            path.push(byte);
         }
         self.get_node_value(&path)
     }
@@ -138,7 +140,7 @@ impl<S: Storage> VerkleTree<S> {
         let mut path = Vec::new();
         let mut path_exists = true;
 
-        for depth in 0..KEY_SIZE {
+        for (depth, &byte) in key.iter().enumerate().take(KEY_SIZE) {
             let empty_child_root = self.empty_subtree_root_hash(depth + 1);
             
             // Collect sibling hashes untuk level ini
@@ -161,9 +163,9 @@ impl<S: Storage> VerkleTree<S> {
             if path_exists && self.node_exists(&path) {
                 if let Some(_commitment) = self.get_node_commitment(&path, depth) {
                     let point = <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(
-                        &key[depth].to_le_bytes()[..],
+                        &byte.to_le_bytes()[..],
                     );
-                    let value_hash = self.hash_node_value_at_index(&path, key[depth]);
+                    let value_hash = self.hash_node_value_at_index(&path, byte);
                     if let Ok(proof) = self.pc.open(
                         &self.reconstruct_node_polynomial(&path, depth),
                         point,
@@ -229,7 +231,7 @@ impl<S: Storage> VerkleTree<S> {
 
         // Verify IPA opening proofs untuk setiap level
         for opening_proof in &proof.opening_proofs {
-            if let Err(_) = self.pc.verify(&opening_proof.quotient_commitment, opening_proof) {
+            if self.pc.verify(&opening_proof.quotient_commitment, opening_proof).is_err() {
                 return false;
             }
         }
@@ -532,7 +534,7 @@ impl<S: Storage> VerkleTree<S> {
     fn hash_node_value_at_index(&self, path: &[u8], child_index: u8) -> <EdwardsProjective as Group>::ScalarField {
         let mut child_path = path.to_vec();
         child_path.push(child_index);
-        let child_root = self.compute_node_root_hash(&child_path, path.len() as usize + 1);
+        let child_root = self.compute_node_root_hash(&child_path, path.len() + 1);
         <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
     }
 }

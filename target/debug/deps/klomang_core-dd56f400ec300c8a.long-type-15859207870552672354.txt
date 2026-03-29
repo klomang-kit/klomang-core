@@ -1,1 +1,0 @@
-Result<v_trie::VerkleTree<storage::MemoryStorage>, CoreError>

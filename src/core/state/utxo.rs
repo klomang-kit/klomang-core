@@ -136,6 +136,12 @@ impl UtxoSet {
     }
 }
 
+impl Default for UtxoSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

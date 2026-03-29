@@ -10,15 +10,14 @@ use klomang_core::core::crypto::verkle::verkle_tree::ProofType;
 #[test]
 fn test_verkle_tree_insert_retrieve() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [1u8; 32];
     let value = b"test_value_12345".to_vec();
     
     tree.insert(key, value.clone());
     
-    let retrieved = tree.get(&key);
+    let retrieved = tree.get(key);
     assert_eq!(retrieved, Some(value));
 }
 
@@ -26,8 +25,7 @@ fn test_verkle_tree_insert_retrieve() {
 #[test]
 fn test_verkle_tree_multiple_insertions() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     // Insert multiple key-value pairs
     for i in 0..10 {
@@ -36,7 +34,7 @@ fn test_verkle_tree_multiple_insertions() {
         let value = format!("value_{}", i).as_bytes().to_vec();
         tree.insert(key, value.clone());
         
-        let retrieved = tree.get(&key);
+        let retrieved = tree.get(key);
         assert_eq!(retrieved, Some(value));
     }
 }
@@ -45,18 +43,17 @@ fn test_verkle_tree_multiple_insertions() {
 #[test]
 fn test_verkle_tree_root_hash_stability() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [42u8; 32];
     let value = b"stable_value".to_vec();
     
     tree.insert(key, value.clone());
-    let root1 = tree.get_root().expect("Failed to get root 1");
+    let root1 = tree.get_root();
     
     // Inserting same key/value again should not change root
     tree.insert(key, value);
-    let root2 = tree.get_root().expect("Failed to get root 2");
+    let root2 = tree.get_root();
     
     assert_eq!(root1, root2);
 }
@@ -65,23 +62,20 @@ fn test_verkle_tree_root_hash_stability() {
 #[test]
 fn test_verkle_tree_membership_proof() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [100u8; 32];
     let value = b"membership_test".to_vec();
     
     tree.insert(key, value.clone());
     
-    let proof = tree.generate_proof(key)
-        .expect("Failed to generate proof");
+    let proof = tree.generate_proof(key);
     
     // Verify membership proof
     assert_eq!(proof.proof_type, ProofType::Membership);
     assert_eq!(proof.leaf_value, Some(value));
     
-    let is_valid = tree.verify_proof(&proof)
-        .expect("Failed to verify proof");
+    let is_valid = tree.verify_proof(&proof);
     assert!(is_valid);
 }
 
@@ -89,8 +83,7 @@ fn test_verkle_tree_membership_proof() {
 #[test]
 fn test_verkle_tree_non_membership_proof() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let inserted_key = [50u8; 32];
     let inserted_value = b"inserted".to_vec();
@@ -98,15 +91,13 @@ fn test_verkle_tree_non_membership_proof() {
     
     let missing_key = [75u8; 32];
     
-    let proof = tree.generate_proof(missing_key)
-        .expect("Failed to generate proof");
+    let proof = tree.generate_proof(missing_key);
     
     // Verify non-membership proof
     assert_eq!(proof.proof_type, ProofType::NonMembership);
     assert_eq!(proof.leaf_value, None);
     
-    let is_valid = tree.verify_proof(&proof)
-        .expect("Failed to verify proof");
+    let is_valid = tree.verify_proof(&proof);
     assert!(is_valid);
 }
 
@@ -114,20 +105,17 @@ fn test_verkle_tree_non_membership_proof() {
 #[test]
 fn test_verkle_tree_invalid_proof_modified_root() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [10u8; 32];
     tree.insert(key, b"value".to_vec());
     
-    let mut proof = tree.generate_proof(key)
-        .expect("Failed to generate proof");
+    let mut proof = tree.generate_proof(key);
     
     // Corrupt the proof's root
     proof.root[0] ^= 0xFF;
     
-    let is_valid = tree.verify_proof(&proof)
-        .expect("Failed to verify proof");
+    let is_valid = tree.verify_proof(&proof);
     assert!(!is_valid);
 }
 
@@ -157,17 +145,17 @@ fn test_key_pair_generation() {
     let keypair = KeyPairWrapper::new();
     
     // Public key should be derived from private key
-    let pubkey = keypair.get_public_key();
-    assert!(!pubkey.is_empty());
-    assert_eq!(pubkey.len(), 32); // ECDSA public key size
+    let pubkey = keypair.public_key();
+    let pubkey_bytes = pubkey.to_bytes();
+    assert!(!pubkey_bytes.is_empty());
+    assert!(pubkey_bytes.len() == 33 || pubkey_bytes.len() == 65); // compressed/uncompressed formats
 }
 
 /// Test 10: Verkle tree storage persistence
 #[test]
 fn test_verkle_tree_storage_clone() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [200u8; 32];
     let value = b"persistence_test".to_vec();
@@ -177,8 +165,7 @@ fn test_verkle_tree_storage_clone() {
     let cloned_storage = tree.storage_clone();
     
     // Create new tree from cloned storage
-    let tree2 = VerkleTree::new(cloned_storage)
-        .expect("Failed to create tree from cloned storage");
+    let tree2 = VerkleTree::new(cloned_storage);
     
     // Should be able to retrieve the value from new tree
     let retrieved = tree2.get(&key);
@@ -189,15 +176,13 @@ fn test_verkle_tree_storage_clone() {
 #[test]
 fn test_verkle_tree_empty_operations() {
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let tree = VerkleTree::new(storage);
     
     let key = [0u8; 32];
-    assert_eq!(tree.get(&key), None);
+    assert_eq!(tree.get(key), None);
     
     // Get root from empty tree
-    let root = tree.get_root()
-        .expect("Failed to get root from empty tree");
+    let root = tree.get_root();
     assert_eq!(root.len(), 32);
 }
 
@@ -205,15 +190,14 @@ fn test_verkle_tree_empty_operations() {
 #[test]
 fn test_verkle_tree_large_values() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [123u8; 32];
     let large_value = vec![42u8; 1000]; // 1KB value
     
     tree.insert(key, large_value.clone());
     
-    let retrieved = tree.get(&key);
+    let retrieved = tree.get(key);
     assert_eq!(retrieved, Some(large_value));
 }
 
@@ -221,8 +205,7 @@ fn test_verkle_tree_large_values() {
 #[test]
 fn test_verkle_tree_many_keys() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     // Insert 256 different keys
     for i in 0..256 {
@@ -235,7 +218,7 @@ fn test_verkle_tree_many_keys() {
     for i in 0..256 {
         let mut key = [i as u8; 32];
         let value = format!("value_{}", i).as_bytes().to_vec();
-        assert_eq!(tree.get(&key), Some(value));
+        assert_eq!(tree.get(key), Some(value));
     }
 }
 
@@ -254,14 +237,12 @@ fn test_hash_equality() {
 #[test]
 fn test_verkle_proof_path_correctness() {
     let storage = MemoryStorage::new();
-    let mut tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let mut tree = VerkleTree::new(storage);
     
     let key = [77u8; 32];
     tree.insert(key, b"path_test".to_vec());
     
-    let proof = tree.generate_proof(key)
-        .expect("Failed to generate proof");
+    let proof = tree.generate_proof(key);
     
     // Path length should match key size (32 bytes)
     assert_eq!(proof.path.len(), 32);

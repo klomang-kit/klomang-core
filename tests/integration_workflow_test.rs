@@ -90,7 +90,7 @@ fn test_block_creation() {
 /// Test 5: Genesis block setup
 #[test]
 fn test_genesis_block() {
-    let mut parents = HashSet::new();
+    let parents = HashSet::new();
     let genesis = make_block(b"genesis", vec![], parents);
     
     assert_eq!(genesis.transactions.len(), 0);
@@ -131,7 +131,7 @@ fn test_multiple_blocks_in_dag() {
 #[test]
 fn test_block_commitment_verification() {
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage);
+    let mut tree = VerkleTree::new(storage);
     
     // Verify tree was created
     let root = tree.get_root();

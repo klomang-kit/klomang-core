@@ -9,6 +9,11 @@ use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 use ark_serialize::CanonicalSerialize;
 use blake3;
 
+type ScalarField = <EdwardsProjective as Group>::ScalarField;
+type RootHashes = Vec<[u8; 32]>;
+type ScalarValues = Vec<ScalarField>;
+type EmptySubtreeConstantsResult = Result<(RootHashes, ScalarValues), CoreError>;
+
 const VERKLE_RADIX: usize = 256;
 const KEY_SIZE: usize = 32;
 
@@ -56,8 +61,8 @@ impl<S: Storage> VerkleTree<S> {
         let mut path = Vec::new();
         self.ensure_node(&path);
 
-        for depth in 0..KEY_SIZE {
-            path.push(key[depth]);
+        for &byte in key.iter().take(KEY_SIZE) {
+            path.push(byte);
             self.ensure_node(&path);
         }
 
@@ -80,7 +85,7 @@ impl<S: Storage> VerkleTree<S> {
         let mut path = Vec::new();
         let mut path_exists = true;
 
-        for depth in 0..KEY_SIZE {
+        for (depth, &byte) in key.iter().enumerate().take(KEY_SIZE) {
             let empty_child_root = self.empty_subtree_root_hash(depth + 1);
             for child_index in 0..VERKLE_RADIX {
                 let child_root = if path_exists && self.node_exists(&path) {
@@ -98,7 +103,7 @@ impl<S: Storage> VerkleTree<S> {
             }
 
             if path_exists {
-                path.push(key[depth]);
+                path.push(byte);
                 if !self.node_exists(&path) {
                     path_exists = false;
                 }
@@ -298,10 +303,7 @@ impl<S: Storage> VerkleTree<S> {
 
     fn compute_empty_subtree_constants(
         pc: &PolynomialCommitment,
-    ) -> Result<(
-        Vec<[u8; 32]>,
-        Vec<<EdwardsProjective as Group>::ScalarField>,
-    ), CoreError> {
+    ) -> EmptySubtreeConstantsResult {
         let mut roots = vec![[0u8; 32]; KEY_SIZE + 1];
         let mut scalars = vec![<EdwardsProjective as Group>::ScalarField::ZERO; KEY_SIZE + 1];
 

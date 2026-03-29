@@ -169,7 +169,7 @@ impl<S: Storage + Clone> StateManager<S> {
     pub fn restore_from_snapshot(&mut self, snapshot_root: [u8; 32], height: u64) -> Result<(), StateManagerError> {
         let snapshot_idx = self.snapshots.iter()
             .position(|s| s.height == height && s.root == snapshot_root)
-            .ok_or_else(|| StateManagerError::SnapshotNotFound(height))?;
+            .ok_or(StateManagerError::SnapshotNotFound(height))?;
 
         let storage = self.snapshot_storages
             .get(snapshot_idx)

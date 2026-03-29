@@ -28,6 +28,12 @@ impl KeyPairWrapper {
     }
 }
 
+impl Default for KeyPairWrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn verify(pubkey: &VerifyingKey, msg: &[u8], signature: &Signature) -> bool {
     let msg_hash = Hash::new(msg);
     pubkey.verify(&msg_hash.as_bytes()[..], signature).is_ok()

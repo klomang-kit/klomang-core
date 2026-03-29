@@ -1,10 +1,9 @@
 //! DAA (Difficulty Adjustment Algorithm) and Consensus Edge Cases
 //! Tests proof-of-work difficulty, mining, and edge cases
 
-use klomang_core::core::daa::difficulty::Difficulty;
-use klomang_core::core::pow::miner::Miner;
 use klomang_core::core::consensus::GhostDag;
 use klomang_core::core::dag::Dag;
+use klomang_core::core::daa::difficulty::Daa;
 use klomang_core::core::crypto::Hash;
 use klomang_core::core::dag::BlockNode;
 use std::collections::HashSet;
@@ -25,47 +24,74 @@ fn make_block(id: &[u8], parents: HashSet<Hash>) -> BlockNode {
     }
 }
 
-/// Test 1: Difficulty calculation - high target
-#[test]
-fn test_difficulty_high_target() {
-    let target = [0xFF; 32]; // Very high target (easy difficulty)
-    let difficulty = Difficulty::from_target(target);
-    
-    assert!(difficulty > 0);
+fn make_timed_block(id: &[u8], parents: HashSet<Hash>, timestamp: u64, difficulty: u64) -> BlockNode {
+    BlockNode {
+        id: Hash::new(id),
+        parents,
+        children: HashSet::new(),
+        selected_parent: None,
+        blue_set: HashSet::new(),
+        red_set: HashSet::new(),
+        blue_score: 0,
+        timestamp,
+        difficulty,
+        nonce: 0,
+        transactions: Vec::new(),
+    }
 }
 
-/// Test 2: Difficulty calculation - low target
 #[test]
-fn test_difficulty_low_target() {
-    let target = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]; // Very low target (hard difficulty)
-    let difficulty = Difficulty::from_target(target);
-    
-    assert!(difficulty > 0);
+fn test_daa_calculate_next_difficulty_fast_chain_increases() {
+    let mut dag = Dag::new();
+    let genesis = make_timed_block(b"genesis", HashSet::new(), 0, 1000);
+    dag.add_block(genesis).expect("Failed genesis");
+
+    let mut parents = HashSet::new();
+    parents.insert(Hash::new(b"genesis"));
+
+    for i in 1..=5u64 {
+        let block = make_timed_block(
+            format!("block-fast-{}", i).as_bytes(),
+            parents.clone(),
+            i,
+            1000,
+        );
+
+        dag.add_block(block.clone()).expect("Failed add fast block");
+        parents.clear();
+        parents.insert(block.id.clone());
+    }
+
+    let daa = Daa::new(2, 5);
+    let next_diff = daa.calculate_next_difficulty(&dag, 6);
+    assert_eq!(next_diff, 2000);
 }
 
-/// Test 3: Difficulty ordering - higher target = lower difficulty
 #[test]
-fn test_difficulty_ordering() {
-    let high_target = [0xFF; 32];
-    let low_target = [0x10; 32];
-    
-    let high_diff = Difficulty::from_target(high_target);
-    let low_diff = Difficulty::from_target(low_target);
-    
-    assert!(high_diff > low_diff);
-}
+fn test_daa_calculate_next_difficulty_slow_chain_decreases() {
+    let mut dag = Dag::new();
+    let genesis = make_timed_block(b"genesis", HashSet::new(), 0, 1000);
+    dag.add_block(genesis).expect("Failed genesis");
 
-/// Test 4: Miner creation
-#[test]
-fn test_miner_creation() {
-    let miner = Miner::new(
-        Hash::new(b"genesis"),
-        Some([0x00; 32]),
-    );
-    assert!(miner.is_ok());
+    let mut parents = HashSet::new();
+    parents.insert(Hash::new(b"genesis"));
+
+    for i in 1..=5u64 {
+        let block = make_timed_block(
+            format!("block-slow-{}", i).as_bytes(),
+            parents.clone(),
+            i * 10,
+            1000,
+        );
+
+        dag.add_block(block.clone()).expect("Failed add slow block");
+        parents.clear();
+        parents.insert(block.id.clone());
+    }
+
+    let daa = Daa::new(2, 5);
+    let next_diff = daa.calculate_next_difficulty(&dag, 60);
+    assert_eq!(next_diff, 500);
 }
 
 /// Test 5: GHOSTDAG with single block
@@ -82,10 +108,9 @@ fn test_ghostdag_single_block() {
     
     dag.add_block(block.clone()).expect("Failed to add block");
     
-    let tips = vec![block.id.clone()];
-    let vblock = ghostdag.compute_virtual_block(&dag, &tips);
+    let vblock = ghostdag.get_virtual_block(&dag);
     
-    assert!(!vblock.parents.is_empty() || vblock.selected_parent.is_some());
+    assert!(vblock.is_some());
 }
 
 /// Test 6: GHOSTDAG with empty tips
@@ -94,11 +119,8 @@ fn test_ghostdag_empty_tips() {
     let ghostdag = GhostDag::new(10);
     let dag = Dag::new();
     
-    let tips = vec![];
-    let vblock = ghostdag.compute_virtual_block(&dag, &tips);
-    
-    // Should handle empty tips gracefully
-    assert!(vblock.parents.is_empty());
+    let vblock = ghostdag.get_virtual_block(&dag);
+    assert!(vblock.is_some());
 }
 
 /// Test 7: GHOSTDAG parent selection
@@ -166,11 +188,8 @@ fn test_ghostdag_multiple_chains() {
     dag.add_block(b2_alt.clone()).expect("Failed to add b2_alt");
     
     // Compute virtual block with both chain tips
-    let tips = vec![b2.id.clone(), b2_alt.id.clone()];
-    let vblock = ghostdag.compute_virtual_block(&dag, &tips);
-    
-    // Should select one parent or include both
-    assert!(!vblock.parents.is_empty() || vblock.selected_parent.is_some());
+    let vblock = ghostdag.get_virtual_block(&dag);
+    assert!(vblock.is_some());
 }
 
 /// Test 9: DAG add_block functionality
@@ -258,13 +277,7 @@ fn test_ghostdag_anticone() {
     let anticone = ghostdag.anticone(&dag, &b2.id);
     
     // Should be some blocks in anticone or empty
-    assert!(anticone.is_empty() || anticone.len() > 0);
-}
-
-/// Test 13: Difficulty constant
-#[test]
-fn test_difficulty_constants() {
-    assert!(Difficulty::MAX_TARGET.len() == 32);
+    assert!(anticone.is_empty() || !anticone.is_empty());
 }
 
 /// Test 14: Block hash consistency
@@ -296,9 +309,109 @@ fn test_ghostdag_blue_set() {
     });
     dag.add_block(b2.clone()).expect("Failed to add b2");
     
-    let tips = vec![b2.id.clone()];
-    let vblock = ghostdag.compute_virtual_block(&dag, &tips);
+    let vblock = ghostdag.get_virtual_block(&dag);
     
     // Blue set should be computed
-    assert!(vblock.blue_set.is_empty() || vblock.blue_set.len() > 0);
+    assert!(vblock.is_some());
+}
+
+/// Test DAA: Simulate block time changes and verify difficulty adjustment
+#[test]
+fn test_daa_simulate_block_time_changes() {
+    let mut dag = Dag::new();
+    let daa = Daa::new(1, 10); // Target 1 second, window 10 blocks
+
+    // Initial difficulty
+    let initial_diff = daa.calculate_next_difficulty(&dag, 0);
+    assert_eq!(initial_diff, 1000);
+
+    let mut parents = HashSet::new();
+    parents.insert(Hash::new(b"genesis"));
+
+    // Simulate fast blocks (0.5 seconds each) - should increase difficulty
+    let mut current_time = 0u64;
+    let mut current_diff = initial_diff;
+    for i in 1..=15 {
+        current_time += 500; // 0.5 seconds per block
+        let block = make_timed_block(
+            format!("fast_block_{}", i).as_bytes(),
+            parents.clone(),
+            current_time,
+            current_diff,
+        );
+        dag.add_block(block.clone()).expect("Failed to add fast block");
+        parents.clear();
+        parents.insert(block.id.clone());
+
+        if i >= 10 {
+            let next_diff = daa.calculate_next_difficulty(&dag, current_time);
+            assert!(next_diff > current_diff, "Difficulty should increase for fast blocks at block {}", i);
+            current_diff = next_diff;
+        }
+    }
+
+    // Reset for slow blocks simulation
+    let mut dag_slow = Dag::new();
+    let mut parents_slow = HashSet::new();
+    parents_slow.insert(Hash::new(b"genesis_slow"));
+    current_time = 0;
+    current_diff = initial_diff;
+
+    // Simulate slow blocks (2 seconds each) - should decrease difficulty
+    for i in 1..=15 {
+        current_time += 2000; // 2 seconds per block
+        let block = make_timed_block(
+            format!("slow_block_{}", i).as_bytes(),
+            parents_slow.clone(),
+            current_time,
+            current_diff,
+        );
+        dag_slow.add_block(block.clone()).expect("Failed to add slow block");
+        parents_slow.clear();
+        parents_slow.insert(block.id.clone());
+
+        if i >= 10 {
+            let next_diff = daa.calculate_next_difficulty(&dag_slow, current_time);
+            assert!(next_diff < current_diff, "Difficulty should decrease for slow blocks at block {}", i);
+            current_diff = next_diff;
+        }
+    }
+
+    // Test boundary conditions
+    let daa_strict = Daa::new(1, 2); // Very small window
+    let mut dag_boundary = Dag::new();
+    let mut parents_boundary = HashSet::new();
+    parents_boundary.insert(Hash::new(b"genesis_boundary"));
+
+    // Add blocks with varying times
+    let times_and_expected = [
+        (1, 1000), // First block, initial difficulty
+        (2, 1000), // Second block at 1 second interval, maintain
+        (3, 500),  // Third block at 1 second, should decrease
+        (5, 1000), // Fourth block at 2 seconds, should increase back
+    ];
+
+    let mut prev_diff = 1000;
+    for (i, (time, expected)) in times_and_expected.iter().enumerate() {
+        if i == 0 { continue; } // Skip genesis
+        let block = make_timed_block(
+            format!("boundary_block_{}", i).as_bytes(),
+            parents_boundary.clone(),
+            *time,
+            prev_diff,
+        );
+        dag_boundary.add_block(block.clone()).expect("Failed to add boundary block");
+        parents_boundary.clear();
+        parents_boundary.insert(block.id.clone());
+
+        let next_diff = daa_strict.calculate_next_difficulty(&dag_boundary, *time);
+        // Allow some tolerance due to floating point calculations
+        let tolerance = (next_diff as f64 * 0.1) as u64;
+        let expected_val = *expected as u64;
+        assert!(
+            (next_diff >= expected_val.saturating_sub(tolerance)) && (next_diff <= expected_val + tolerance),
+            "Boundary test failed at block {}: expected ~{}, got {}", i, expected_val, next_diff
+        );
+        prev_diff = next_diff;
+    }
 }

@@ -7,7 +7,7 @@ use klomang_core::core::state::transaction::{Transaction, TxOutput, TxInput, Sig
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::state::MemoryStorage;
 use klomang_core::core::state_manager::{StateManager, StateManagerError};
-use klomang_core::core::crypto::verkle::VerkleTree;
+use klomang_core::core::state::v_trie::VerkleTree;
 use std::collections::HashSet;
 
 fn make_tx(inputs: Vec<TxInput>, outputs: Vec<TxOutput>) -> Transaction {
@@ -45,8 +45,7 @@ fn make_block(id: &[u8], txs: Vec<Transaction>) -> BlockNode {
 fn test_empty_block_handling() {
     let mut utxo_set = UtxoSet::new();
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let tree = VerkleTree::new(storage).expect("Failed to create VerkleTree");
     let mut manager = StateManager::new(tree)
         .expect("Failed to create StateManager");
     
@@ -64,8 +63,7 @@ fn test_empty_block_handling() {
 fn test_block_no_outputs() {
     let mut utxo_set = UtxoSet::new();
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let tree = VerkleTree::new(storage).expect("Failed to create VerkleTree");
     let mut manager = StateManager::new(tree)
         .expect("Failed to create StateManager");
     
@@ -88,8 +86,7 @@ fn test_block_no_outputs() {
 fn test_rollback_same_height() {
     let mut utxo_set = UtxoSet::new();
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage)
-        .expect("Failed to create VerkleTree");
+    let tree = VerkleTree::new(storage).expect("Failed to create VerkleTree");
     let mut manager = StateManager::new(tree)
         .expect("Failed to create StateManager");
     

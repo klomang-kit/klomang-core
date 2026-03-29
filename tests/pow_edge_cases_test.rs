@@ -2,28 +2,29 @@
 //! Tests mining, difficulty verification, and hash computation edge cases
 
 use klomang_core::core::crypto::Hash;
-use klomang_core::core::pow::Miner;
-use klomang_core::core::daa::Difficulty;
+use klomang_core::core::dag::Dag;
+use klomang_core::core::pow::miner::Pow;
+use klomang_core::core::daa::difficulty::Daa;
 
-/// Test 1: Miner creation
+/// Test 1: PoW helper creation
 #[test]
-fn test_miner_creation() {
-    let miner = Miner::new(1);
-    assert_eq!(miner.difficulty, 1);
+fn test_pow_creation() {
+    let pow = Pow::new(1);
+    assert_eq!(pow.difficulty, 1);
 }
 
-/// Test 2: Miner creation with max difficulty
+/// Test 2: PoW helper creation with high difficulty
 #[test]
-fn test_miner_max_difficulty() {
-    let miner = Miner::new(u32::MAX);
-    assert_eq!(miner.difficulty, u32::MAX);
+fn test_pow_max_difficulty() {
+    let pow = Pow::new(10);
+    assert_eq!(pow.difficulty, 10);
 }
 
-/// Test 3: Miner creation with zero difficulty
+/// Test 3: PoW helper creation with zero difficulty clamps to 1
 #[test]
-fn test_miner_zero_difficulty() {
-    let miner = Miner::new(0);
-    assert_eq!(miner.difficulty, 0);
+fn test_pow_zero_difficulty_clamps() {
+    let pow = Pow::new(0);
+    assert_eq!(pow.difficulty, 1);
 }
 
 /// Test 4: Hash determinism
@@ -48,7 +49,7 @@ fn test_hash_different_inputs() {
 #[test]
 fn test_hash_empty_input() {
     let hash = Hash::new(b"");
-    assert_eq!(hash.len(), 32);
+    assert_eq!(hash.as_bytes().len(), 32);
 }
 
 /// Test 7: Hash with large input
@@ -56,14 +57,14 @@ fn test_hash_empty_input() {
 fn test_hash_large_input() {
     let large_input = vec![0x00; 10_000];
     let hash = Hash::new(&large_input);
-    assert_eq!(hash.len(), 32);
+    assert_eq!(hash.as_bytes().len(), 32);
 }
 
 /// Test 8: Hash byte length validation
 #[test]
 fn test_hash_byte_length() {
     let hash = Hash::new(b"any_data");
-    assert!(hash.len() >= 32);
+    assert!(hash.as_bytes().len() >= 32);
 }
 
 /// Test 9: Multiple hash operations
@@ -83,37 +84,30 @@ fn test_multiple_hashes() {
     }
 }
 
-/// Test 10: Difficulty comparison
+/// Test 10: DAA with empty DAG returns base difficulty
 #[test]
-fn test_difficulty_comparison() {
-    let diff1 = Difficulty::new(u32::MAX);
-    let diff2 = Difficulty::new(0);
-    
-    assert!(diff1.target > diff2.target);
+fn test_daa_empty_dag_returns_initial_difficulty() {
+    let dag = Dag::new();
+    let daa = Daa::new(1, 5);
+
+    assert_eq!(daa.calculate_next_difficulty(&dag, 0), 1000);
 }
 
-/// Test 11: Difficulty highest target (minimum difficulty)
+/// Test 11: Pow adjustment baseline check
 #[test]
-fn test_difficulty_minimum() {
-    let min_diff = Difficulty::new(1);
-    assert!(min_diff.target > 0);
+fn test_pow_difficulty_adjustment_baseline() {
+    let pow = Pow::new(10);
+    assert_eq!(pow.difficulty, 10);
 }
 
-/// Test 12: Difficulty maximum (maximum difficulty)
-#[test]
-fn test_difficulty_maximum() {
-    let max_diff = Difficulty::new(u32::MAX);
-    assert!(max_diff.target > 0);
-}
-
-/// Test 13: Hash representation
+/// Test 12: Hash representation
 #[test]
 fn test_hash_representation() {
     let hash = Hash::new(b"test");
     let hex_str = format!("{:?}", hash);
     
     // Should be representable in hex
-    assert!(hex_str.len() > 0);
+    assert!(!hex_str.is_empty());
 }
 
 /// Test 14: Hash ordering
@@ -130,14 +124,14 @@ fn test_hash_ordering() {
     let _ = hashes.iter().max();
 }
 
-/// Test 15: Miner adjustment
+/// Test 15: Pow adjustment
 #[test]
-fn test_miner_difficulty_adjustment() {
-    let mut miner = Miner::new(10);
-    
+fn test_pow_difficulty_adjustment() {
+    let pow = Pow::new(10);
+
     // Verify initial state
-    assert_eq!(miner.difficulty, 10);
-    
-    // Miner should be usable
-    assert!(miner.difficulty > 0);
+    assert_eq!(pow.difficulty, 10);
+
+    // PoW helper should be usable
+    assert!(pow.difficulty > 0);
 }

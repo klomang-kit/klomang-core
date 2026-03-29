@@ -2,7 +2,6 @@
 ///
 /// This module implements deterministic, in-memory reward calculations
 /// based on UTXO transaction inputs and a halving schedule every 100,000 blocks.
-
 use crate::core::config::Config;
 use crate::core::consensus::emission;
 use crate::core::dag::BlockNode;

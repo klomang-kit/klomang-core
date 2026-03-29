@@ -2,7 +2,6 @@
 ///
 /// Calculates block rewards based on DAA score (blue score)
 /// Ensures total supply never exceeds MAX_SUPPLY
-
 pub const COIN_UNIT: u64 = 100_000_000; // 1 SLUG = 10^8 smallest units
 pub const UNIT: u128 = COIN_UNIT as u128; // 8 decimal places
 pub const MAX_SUPPLY: u128 = 600_000_000u128 * UNIT; // 600M * 1e8 smallest unit

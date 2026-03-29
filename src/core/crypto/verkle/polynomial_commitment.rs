@@ -285,16 +285,12 @@ impl PolynomialCommitment {
         value: <EdwardsProjective as Group>::ScalarField,
     ) -> Vec<<EdwardsProjective as Group>::ScalarField> {
         let mut p_coeffs = Vec::with_capacity(quotient_coeffs.len() + 1);
-        let first = -point * quotient_coeffs.get(0).copied().unwrap_or_else(||
-            <EdwardsProjective as Group>::ScalarField::ZERO
-        ) + value;
+        let first = -point * quotient_coeffs.first().copied().unwrap_or(<EdwardsProjective as Group>::ScalarField::ZERO) + value;
         p_coeffs.push(first);
 
         for i in 1..=quotient_coeffs.len() {
             let prev = quotient_coeffs[i - 1];
-            let next = quotient_coeffs.get(i).copied().unwrap_or_else(||
-                <EdwardsProjective as Group>::ScalarField::ZERO
-            );
+            let next = quotient_coeffs.get(i).copied().unwrap_or(<EdwardsProjective as Group>::ScalarField::ZERO);
             p_coeffs.push(prev - point * next);
         }
 
