@@ -117,14 +117,12 @@ impl Transaction {
         for payload in parser.parse_all(payload) {
             match payload {
                 Ok(Payload::ImportSection(reader)) => {
-                    for import in reader {
-                        if let Ok(import) = import {
-                            if import.module == "env" {
-                                function_imports.push((
-                                    import.name.to_string(),
-                                    function_imports.len(),
-                                ));
-                            }
+                    for import in reader.into_iter().flatten() {
+                        if import.module == "env" {
+                            function_imports.push((
+                                import.name.to_string(),
+                                function_imports.len(),
+                            ));
                         }
                     }
                 }

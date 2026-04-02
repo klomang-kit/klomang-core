@@ -43,6 +43,7 @@ pub struct VerkleProof {
 #[derive(Debug, Clone)]
 struct CachedNode {
     commitment: Option<Commitment>,
+    dirty: bool,
 }
 
 /// Verkle Tree dengan 256-ary branching, polynomial commitments, dan incremental updates
@@ -61,12 +62,14 @@ pub struct VerkleTree<S: Storage> {
     
     /// Root hash cache
     root_cache: Option<[u8; 32]>,
-    /// Dirty flag untuk track perubahan yang memerlukan recompute root
-    dirty: bool,
     /// Mark keys that have been pruned
     pruned_keys: HashSet<Vec<u8>>,
     /// Stored commitments for pruned paths, to preserve root for stateless proofs
     pruned_commitments: HashMap<Vec<u8>, Commitment>,
+    
+    /// Cache hit/miss counters for efficiency tracking
+    cache_hits: usize,
+    cache_misses: usize,
 }
 
 impl<S: Storage> VerkleTree<S> {
@@ -83,9 +86,10 @@ impl<S: Storage> VerkleTree<S> {
             empty_subtree_roots,
             empty_subtree_scalars,
             root_cache: None,
-            dirty: true,
             pruned_keys: HashSet::new(),
             pruned_commitments: HashMap::new(),
+            cache_hits: 0,
+            cache_misses: 0,
         };
         tree.ensure_node(&[]);
         tree
@@ -114,15 +118,13 @@ impl<S: Storage> VerkleTree<S> {
 
     /// Get root hash dengan incremental update optimization
     pub fn get_root(&mut self) -> [u8; 32] {
-        if !self.dirty {
-            if let Some(root) = self.root_cache {
-                return root;
-            }
+        if let Some(root) = self.root_cache {
+            self.cache_hits += 1;
+            return root;
         }
 
         let root = self.compute_node_root_hash(&[], 0);
         self.root_cache = Some(root);
-        self.dirty = false;
         root
     }
 
@@ -184,7 +186,6 @@ impl<S: Storage> VerkleTree<S> {
         // Keep root cache consistent with pruned commitment root (stateless support)
         if let Some(root_commit) = self.pruned_commitments.get(&Vec::new()) {
             self.root_cache = Some(Self::commitment_root_hash(root_commit));
-            self.dirty = false;
         }
 
         Ok(())
@@ -417,7 +418,6 @@ impl<S: Storage> VerkleTree<S> {
         let key = Self::key_for_path(path);
         if self.storage.get(&key).is_none() {
             self.storage.put(key, Self::serialize_node(None));
-            self.dirty = true;
         }
     }
 
@@ -445,7 +445,6 @@ impl<S: Storage> VerkleTree<S> {
     fn set_node_value(&mut self, path: &[u8], value: Option<Vec<u8>>) {
         let key = Self::key_for_path(path);
         self.storage.put(key, Self::serialize_node(value.as_deref()));
-        self.dirty = true;
     }
 
     /// Invalidate commitment cache untuk path dan ancestors (incremental optimization)
@@ -453,10 +452,11 @@ impl<S: Storage> VerkleTree<S> {
         // Invalidate dari current node ke root
         for i in 0..=path.len() {
             let node_key = Self::key_for_path(&path[..i]);
-            self.commitment_cache.remove(&node_key);
+            if let Some(cached) = self.commitment_cache.get_mut(&node_key) {
+                cached.dirty = true;
+            }
         }
         self.root_cache = None;
-        self.dirty = true;
     }
 
     /// Hapus marker pruned dan commit laluan yang mungkin usang dari root untuk key yang diinsert
@@ -478,31 +478,33 @@ impl<S: Storage> VerkleTree<S> {
 
         // if root was kept as pruned and now data changed, invalidate
         self.root_cache = None;
-        self.dirty = true;
     }
 
     /// Get atau compute cached commitment untuk node
     fn get_node_commitment(&mut self, path: &[u8], depth: usize) -> Option<Commitment> {
         let node_key = Self::key_for_path(path);
 
-        // If this path has recorded commitment for pruned support, prioritize it.
+        // Check cache dulu
+        if let Some(cached) = self.commitment_cache.get(&node_key) {
+            if !cached.dirty && cached.commitment.is_some() {
+                self.cache_hits += 1;
+                return cached.commitment.clone();
+            }
+        }
+
+        // If this path has recorded commitment for pruned support, use it if no cache
         if let Some(commitment) = self.pruned_commitments.get(&node_key) {
             return Some(commitment.clone());
         }
 
-        // Check cache dulu
-        if let Some(cached) = self.commitment_cache.get(&node_key) {
-            if let Some(commitment) = &cached.commitment {
-                return Some(commitment.clone());
-            }
-        }
-
         // Compute if not cached
+        self.cache_misses += 1;
         let commitment = self.compute_node_commitment(path, depth);
         self.commitment_cache.insert(
             node_key,
             CachedNode {
                 commitment: Some(commitment.clone()),
+                dirty: false,
             },
         );
         
@@ -512,10 +514,21 @@ impl<S: Storage> VerkleTree<S> {
     /// Compute polynomial commitment untuk node dengan efficient re-use
     fn compute_node_commitment(&mut self, path: &[u8], depth: usize) -> Commitment {
         let node_key = Self::key_for_path(path);
+
+        // Check cache first to avoid heavy computation
+        if let Some(cached) = self.commitment_cache.get(&node_key) {
+            if !cached.dirty && cached.commitment.is_some() {
+                self.cache_hits += 1;
+                return cached.commitment.clone().unwrap();
+            }
+        }
+
+        // If this path has recorded commitment for pruned support, use it
         if let Some(prev_commitment) = self.pruned_commitments.get(&node_key) {
             return prev_commitment.clone();
         }
 
+        self.cache_misses += 1;
         if depth == KEY_SIZE {
             let leaf_scalar = self
                 .get_node_value(path)
@@ -794,7 +807,6 @@ mod tests {
         let root2 = tree.get_root();
 
         assert_ne!(root1, root2);
-        assert!(!tree.dirty);
     }
 
     #[test]
@@ -802,22 +814,37 @@ mod tests {
         let storage = MemoryStorage::new();
         let mut tree = VerkleTree::new(storage);
 
-        let mut _keys = vec![];
+        // Insert keys that share common prefixes to test cache reuse
         for i in 0..10 {
-            let key = [i as u8; KEY_SIZE];
-            _keys.push(key);
+            let mut key = [0u8; KEY_SIZE];
+            key[0] = i as u8;
             tree.insert(key, format!("value{}", i).into_bytes());
         }
 
-        // Reset dirty flag setelah initial inserts
+        // Reset counters after initial inserts
+        tree.cache_hits = 0;
+        tree.cache_misses = 0;
         let _ = tree.get_root();
 
-        // Insert baru hanya invalidate affected paths
-        let new_key = [100u8; KEY_SIZE];
+        // Insert a new key that shares some prefix
+        let mut new_key = [0u8; KEY_SIZE];
+        new_key[1] = 100; // Shares prefix [0] with others
         tree.insert(new_key, b"new".to_vec());
 
-        // Cache harus smaller dibanding full tree
-        assert!(tree.commitment_cache.len() < KEY_SIZE * 2);
+        // Reset counters for subsequent get_root calls
+        tree.cache_hits = 0;
+        tree.cache_misses = 0;
+
+        // Compute root multiple times to test cache reuse
+        let _ = tree.get_root();
+        let _ = tree.get_root();
+        let _ = tree.get_root();
+
+        // Hit rate should be reasonable (>10%) for subsequent calls
+        let total_accesses = tree.cache_hits + tree.cache_misses;
+        assert!(total_accesses > 0, "No cache accesses recorded");
+        let hit_rate = tree.cache_hits as f64 / total_accesses as f64;
+        assert!(hit_rate > 0.1, "Cache hit rate too low: {:.2}", hit_rate);
     }
 
     #[test]

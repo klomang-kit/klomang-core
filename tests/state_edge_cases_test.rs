@@ -3,21 +3,13 @@
 
 use klomang_core::core::crypto::Hash;
 use klomang_core::core::dag::BlockNode;
-use klomang_core::core::state::transaction::{Transaction, TxOutput, TxInput, SigHashType};
+use klomang_core::core::state::transaction::{Transaction, TxOutput};
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::state::MemoryStorage;
 use klomang_core::core::state_manager::{StateManager, StateManagerError};
 use klomang_core::core::state::v_trie::VerkleTree;
 use wasmer::wat2wasm;
 use std::collections::HashSet;
-
-fn make_tx(inputs: Vec<TxInput>, outputs: Vec<TxOutput>) -> Transaction {
-    let mut tx = Transaction::new(inputs, outputs);
-    tx.id = Hash::new(b"test_tx");
-    tx.chain_id = 1;
-    tx.locktime = 0;
-    tx
-}
 
 fn make_block(id: &[u8], txs: Vec<Transaction>) -> BlockNode {
     BlockNode {
@@ -254,7 +246,7 @@ fn test_contract_out_of_gas() {
 /// Test 9: Large value in transaction
 #[test]
 fn test_transaction_large_value() {
-    let mut utxo_set = UtxoSet::new();
+    let _utxo_set = UtxoSet::new();
     
     let tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
         id: Hash::new(b"large_value_tx"),
@@ -291,7 +283,7 @@ fn test_multiple_outputs_per_tx() {
 /// Test 10: State manager get_current_state
 #[test]
 fn test_get_current_state() {
-    let mut utxo_set = UtxoSet::new();
+    let _utxo_set = UtxoSet::new();
     let storage = MemoryStorage::new();
     let tree = VerkleTree::new(storage)
         .expect("Failed to create VerkleTree");

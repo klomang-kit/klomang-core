@@ -7,7 +7,7 @@ use klomang_core::core::errors::CoreError;
 use klomang_core::core::config::Config;
 use klomang_core::core::crypto::verkle::verkle_tree::VerkleTree;
 use klomang_core::core::state::MemoryStorage;
-use klomang_core::core::crypto::schnorr::{KeyPairWrapper, verify_schnorr};
+use klomang_core::core::crypto::schnorr::{verify_schnorr};
 use klomang_core::core::state::transaction::{Transaction, TxInput, TxOutput, SigHashType};
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::dag::{Dag, BlockNode};
@@ -85,11 +85,11 @@ fn test_core_error_variants_comprehensive() {
 
     // Test ConsensusError - this would be triggered by invalid consensus rules
     // For now, we just ensure the variant exists
-    let consensus_err = CoreError::ConsensusError;
-    assert_eq!(format!("{}", consensus_err), "Consensus error");
+    let consensus_err = CoreError::ConsensusError("test consensus".to_string());
+    assert_eq!(format!("{}", consensus_err), "Consensus error: test consensus");
 
     // Test TransactionError - create invalid transaction
-    let mut utxo = UtxoSet::new();
+    let utxo = UtxoSet::new();
     let invalid_tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
         id: Hash::new(b"invalid_tx"),
         inputs: vec![TxInput {
@@ -134,7 +134,7 @@ fn test_core_error_variants_comprehensive() {
 
     // Test PolynomialCommitmentError - force error in Verkle tree operations
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage);
+    let _tree = VerkleTree::new(storage);
     // Try operations that might trigger polynomial commitment errors
     // For now, ensure variant exists
     let poly_err = CoreError::PolynomialCommitmentError("test polynomial error".to_string());
@@ -157,7 +157,7 @@ fn test_error_display_and_debug() {
         CoreError::BlockNotFound,
         CoreError::InvalidParent,
         CoreError::DuplicateBlock,
-        CoreError::ConsensusError,
+        CoreError::ConsensusError("test".to_string()),
         CoreError::TransactionError("test".to_string()),
         CoreError::InvalidSignature,
         CoreError::InvalidPublicKey,
@@ -179,7 +179,7 @@ fn test_error_display_and_debug() {
         assert!(!debug_str.is_empty());
 
         // Ensure it's an Error
-        let _source = error.source();
+        let _source: Option<&dyn std::error::Error> = error.source();
     }
 }
 

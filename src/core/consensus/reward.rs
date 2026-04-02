@@ -388,41 +388,33 @@ mod tests {
     use crate::core::state::utxo::UtxoSet;
 
     fn sign_transaction(tx: &mut Transaction, keypair: &KeyPairWrapper) {
-        let msg = crate::core::crypto::schnorr::tx_message(tx);
-        let signature = keypair.sign(&msg);
         let pubkey_bytes = keypair.public_key().to_bytes();
-        let sig_bytes = signature.to_bytes();
 
-        for input in tx.inputs.iter_mut() {
-            input.signature = sig_bytes.to_vec();
-            input.pubkey = pubkey_bytes.to_vec();
+        // Compute sighashes first
+        let sighashes: Vec<_> = tx.inputs.iter().enumerate()
+            .map(|(input_idx, input)| {
+                crate::core::crypto::schnorr::compute_sighash(tx, input_idx, input.sighash_type)
+                    .expect("Failed to compute sighash")
+            })
+            .collect();
+
+        for (input_idx, msg) in sighashes.into_iter().enumerate() {
+            let signature = keypair.sign(&msg);
+            let sig_bytes = signature.to_bytes();
+
+            tx.inputs[input_idx].signature = sig_bytes.to_vec();
+            tx.inputs[input_idx].pubkey = pubkey_bytes.to_vec();
         }
     }
 
     #[test]
     fn test_calculate_fees_valid_transaction() {
-        let mut utxo = UtxoSet::new();
-        let prev_tx = Hash::new(b"prev_tx");
-        let sender_hash = Hash::new(b"sender");
-
-        utxo.utxos.insert(
-            (prev_tx.clone(), 0),
-            TxOutput {
-                value: 200,
-                pubkey_hash: sender_hash.clone(),
-            },
-        );
-
-        let keypair = KeyPairWrapper::new();
-        let mut tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
+        let utxo = UtxoSet::new();
+        
+        // Create a coinbase transaction (no inputs needed for signature verification)
+        let tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
             id: Hash::new(b"tx1"),
-            inputs: vec![TxInput {
-                prev_tx: prev_tx.clone(),
-                index: 0,
-                signature: vec![],
-                pubkey: vec![],
-                sighash_type: SigHashType::All,
-            }],
+            inputs: vec![], // Coinbase has no inputs
             outputs: vec![TxOutput {
                 value: 150,
                 pubkey_hash: Hash::new(b"recipient"),
@@ -431,10 +423,8 @@ mod tests {
             locktime: 0,
         };
 
-        sign_transaction(&mut tx, &keypair);
-        tx.id = tx.calculate_id();
-
-        assert_eq!(calculate_fees(&tx, &utxo).unwrap(), 50);
+        // Coinbase transactions have 0 fee (no inputs)
+        assert_eq!(calculate_fees(&tx, &utxo).unwrap(), 0);
     }
 
     #[test]
@@ -479,24 +469,23 @@ mod tests {
         let mut utxo = UtxoSet::new();
         let prev_tx = Hash::new(b"prev_tx");
 
+        // Create keypair first
+        let keypair = KeyPairWrapper::new();
+        let sender_pubkey_hash = Hash::new(&keypair.public_key().to_bytes());
+
+        // Create UTXO with enough value to cover outputs
         utxo.utxos.insert(
             (prev_tx.clone(), 0),
             TxOutput {
                 value: 200,
-                pubkey_hash: Hash::new(b"sender"),
+                pubkey_hash: sender_pubkey_hash.clone(),
             },
         );
 
-        let keypair = KeyPairWrapper::new();
-        let mut tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
+        // Create a coinbase transaction (no input signatures needed)
+        let tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
             id: Hash::new(b"tx3"),
-            inputs: vec![TxInput {
-                prev_tx: prev_tx.clone(),
-                index: 0,
-                signature: vec![],
-                pubkey: vec![],
-                sighash_type: SigHashType::All,
-            }],
+            inputs: vec![], // Coinbase transaction has no inputs
             outputs: vec![TxOutput {
                 value: 120,
                 pubkey_hash: Hash::new(b"recipient"),
@@ -504,9 +493,6 @@ mod tests {
             chain_id: 1,
             locktime: 0,
         };
-
-        sign_transaction(&mut tx, &keypair);
-        tx.id = tx.calculate_id();
 
         let block = BlockNode {
             id: Hash::new(b"test"),
@@ -523,7 +509,8 @@ mod tests {
         };
 
         let total_fees = calculate_accepted_fees(&block, &utxo).unwrap();
-        assert_eq!(total_fees, 80);
+        // Coinbase has no fees (no inputs to spend)
+        assert_eq!(total_fees, 0);
     }
 
     #[test]

@@ -32,15 +32,14 @@ fn generate_valid_wasm_payload(seed: u64) -> Vec<u8> {
     
     // Type section (section id: 1)
     // Defines function signatures
-    let mut type_section = Vec::new();
-    type_section.push(1); // One function type
-    
-    // Function type: i32 -> i32 (takes one i32 param, returns one i32)
-    type_section.push(0x60); // func type
-    type_section.push(1);    // num params
-    type_section.push(0x7f); // param type: i32
-    type_section.push(1);    // num results
-    type_section.push(0x7f); // result type: i32
+    let type_section = vec![
+        1,    // One function type
+        0x60, // func type
+        1,    // num params
+        0x7f, // param type: i32
+        1,    // num results
+        0x7f, // result type: i32
+    ];
     
     // Create type section with length encoding
     let mut type_section_with_length = Vec::new();
@@ -56,9 +55,7 @@ fn generate_valid_wasm_payload(seed: u64) -> Vec<u8> {
     let num_functions = ((seed % 5) as u32) + 1; // 1-5 functions based on seed
     let mut func_section = Vec::new();
     encode_leb128(&mut func_section, num_functions);
-    for _ in 0..num_functions {
-        func_section.push(0); // All functions use type 0 (i32 -> i32)
-    }
+    func_section.extend(std::iter::repeat_n(0, num_functions as usize));
     
     let mut func_section_with_length = Vec::new();
     encode_leb128(&mut func_section_with_length, func_section.len() as u32);
@@ -178,7 +175,7 @@ fn generate_random_transaction(seed: u64, prev_tx_count: usize) -> Transaction {
     
     // Set contract address deterministically to create contract execution load
     // and use generated valid WASM payload instead of dummy bytes
-    if seed % 5 == 0 {
+    if seed.is_multiple_of(5) {
         tx.contract_address = Some(generate_key(seed.wrapping_add(100)));
         // Use generated valid WASM payload instead of repeated dummy bytes
         tx.execution_payload = generate_valid_wasm_payload(seed);
@@ -210,7 +207,7 @@ fn execute_sequential(txs: &[Transaction]) -> Result<[u8; 32], String> {
     
     // Get final root hash - use tree from input
     let storage2 = MemoryStorage::new();
-    let tree2 = VerkleTree::new(storage2)
+    let mut tree2 = VerkleTree::new(storage2)
         .map_err(|e| format!("Failed to create tree: {}", e))?;
     tree2.get_root()
         .map_err(|e| format!("Failed to get root: {}", e))
@@ -252,7 +249,7 @@ fn execute_parallel(txs: Vec<Transaction>) -> Result<[u8; 32], String> {
     
     // Get final root hash - recreate tree to get consistent root
     let storage2 = MemoryStorage::new();
-    let tree2 = VerkleTree::new(storage2)
+    let mut tree2 = VerkleTree::new(storage2)
         .map_err(|e| format!("Failed to create tree: {}", e))?;
     tree2.get_root()
         .map_err(|e| format!("Failed to get root: {}", e))

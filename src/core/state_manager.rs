@@ -79,7 +79,7 @@ pub struct StateManager<S: Storage + Clone> {
 }
 
 impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
-    pub fn new(tree: VerkleTree<S>) -> Result<Self, StateManagerError> {
+    pub fn new(mut tree: VerkleTree<S>) -> Result<Self, StateManagerError> {
         let root = tree.get_root()
             .map_err(|e| StateManagerError::CryptographicError(format!("Failed to get root: {}", e)))?;
         let storage_snapshot = tree.storage_clone();
@@ -99,7 +99,7 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
         })
     }
 
-    /// Atomic operation - prevents concurrent modifications
+    /// Atomic operation - prevents concurrent modifications with automatic rollback on failure
     pub fn apply_block(&mut self, block: &BlockNode, utxo: &mut UtxoSet) -> Result<(), StateManagerError> {
         // Acquire exclusive lock when starting block application
         let lock_ptr = &self.apply_lock as *const std::sync::Mutex<()>;
@@ -128,6 +128,16 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
         }
         let _guard = AtomicFlagGuard(applying_block_ptr);
 
+        // CRITICAL: Create snapshot at start of block for atomic rollback on any failure
+        let mut snapshot_tree = self.tree.clone();
+        let snapshot_height = self.current_height;
+        let snapshot_supply = self.current_total_supply;
+        let snapshot_gas_fees = self.block_gas_fees.clone();
+        let snapshot_pending_updates = self.pending_updates.clone();
+        let snapshot_prune_markers = self.prune_markers.clone();
+        let snapshot_outpoint_to_key = self.outpoint_to_key.clone();
+        let snapshot_utxo = utxo.clone();
+
         // Clear pending updates for new block
         self.pending_updates.clear();
 
@@ -136,17 +146,48 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
 
         // Process transactions untuk state update
         for tx in &block.transactions {
-            self.apply_transaction(tx, utxo)?;
+            if let Err(e) = self.apply_transaction(tx, utxo) {
+                // ROLLBACK: Restore snapshot on transaction processing error
+                eprintln!("[ERROR] apply_transaction failed: {}. Rolling back to height {}.", e, snapshot_height);
+                std::mem::swap(&mut self.tree, &mut snapshot_tree);
+                self.current_height = snapshot_height;
+                self.current_total_supply = snapshot_supply;
+                self.block_gas_fees = snapshot_gas_fees;
+                self.pending_updates = snapshot_pending_updates;
+                self.prune_markers = snapshot_prune_markers.clone();
+                self.outpoint_to_key = snapshot_outpoint_to_key.clone();
+                *utxo = snapshot_utxo;
+                return Err(e);
+            }
         }
 
         // Apply all pending updates atomically with anti-burn and supply cap checks
-        self.tree.apply_state_transition(self.pending_updates.clone(), self.current_total_supply)
-            .map_err(|e| StateManagerError::ApplyBlockFailed(format!("State transition failed: {}", e)))?;
+        if let Err(e) = self.tree.apply_state_transition(self.pending_updates.clone(), self.current_total_supply) {
+            // ROLLBACK: Restore snapshot if state transition fails (supply cap, anti-burn, etc)
+            eprintln!("[CRITICAL] apply_state_transition failed: {}. Rolling back block to height {}.", e, snapshot_height);
+            std::mem::swap(&mut self.tree, &mut snapshot_tree);
+            self.current_height = snapshot_height;
+            self.current_total_supply = snapshot_supply;
+            self.block_gas_fees = snapshot_gas_fees;
+            self.pending_updates = snapshot_pending_updates;
+            self.prune_markers = snapshot_prune_markers.clone();
+            self.outpoint_to_key = snapshot_outpoint_to_key.clone();
+            *utxo = snapshot_utxo;
+            return Err(StateManagerError::ApplyBlockFailed(format!("State transition failed: {}", e)));
+        }
 
         self.current_height += 1;
 
-        // Create snapshot setelah semua transactions applied
+        // CRITICAL: Cross-check Verkle root consistency after all updates applied
         let new_root = self.get_root_hash()?;
+        
+        // Verify root changed if transactions were applied (basic sanity check)
+        let old_root = self.snapshots[snapshot_height as usize].root;
+        if !block.transactions.is_empty() && new_root == old_root {
+            eprintln!("[WARNING] Block root unchanged after applying {} transactions. Potential state corruption.", block.transactions.len());
+        }
+
+        // Create snapshot setelah semua transactions applied
         self.snapshots.push(StateSnapshot {
             height: self.current_height,
             root: new_root,
@@ -201,10 +242,17 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
         // Process inputs (remove from UTXO set and subtract from total supply)
         for input in &tx.inputs {
             let outpoint = (input.prev_tx.clone(), input.index);
-            if let Some(output) = utxo.utxos.get(&outpoint) {
-                // Subtract spent amount from total supply
-                self.current_total_supply = self.current_total_supply.saturating_sub(output.value as u128);
-            }
+            let output = match utxo.utxos.get(&outpoint) {
+                Some(output) => output.clone(),
+                None => {
+                    return Err(StateManagerError::ApplyBlockFailed(format!(
+                        "Missing UTXO input in transaction {} at outpoint {:?}",
+                        tx.id, outpoint
+                    )));
+                }
+            };
+            // Subtract spent amount from total supply
+            self.current_total_supply = self.current_total_supply.saturating_sub(output.value as u128);
             utxo.utxos.remove(&outpoint);
             self.outpoint_to_key.remove(&outpoint);
             self.prune_markers.remove(&outpoint);
@@ -296,7 +344,7 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
     }
 
     /// Get root hash dari current state
-    pub fn get_root_hash(&self) -> Result<[u8; 32], StateManagerError> {
+    pub fn get_root_hash(&mut self) -> Result<[u8; 32], StateManagerError> {
         self.tree.get_root()
             .map_err(|e| StateManagerError::CryptographicError(format!("Failed to get root: {}", e)))
     }
@@ -459,7 +507,7 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
     }
 
     /// Get current state snapshot
-    pub fn get_current_state(&self) -> Result<StateSnapshot, StateManagerError> {
+    pub fn get_current_state(&mut self) -> Result<StateSnapshot, StateManagerError> {
         let root = self.tree.get_root()
             .map_err(|e| StateManagerError::CryptographicError(format!("Failed to get root: {}", e)))?;
         Ok(StateSnapshot {
@@ -533,6 +581,43 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
 
         Ok(())
     }
+
+    /// CRITICAL: Cross-check total supply consistency between UTXO set and Verkle state
+    /// Ensures Verkle root hash reflects accurate supply count
+    pub fn cross_check_supply_consistency(&mut self, utxo: &UtxoSet) -> Result<(), StateManagerError> {
+        // Calculate total supply by summing all UTXO values
+        let mut calculated_supply: u128 = 0;
+        for output in utxo.utxos.values() {
+            calculated_supply = calculated_supply.checked_add(output.value as u128)
+                .ok_or_else(|| StateManagerError::SupplyCapExceeded(
+                    "UTXO sum overflow during supply check".to_string()
+                ))?;
+        }
+
+        // Compare with StateManager tracked supply
+        if calculated_supply != self.current_total_supply {
+            return Err(StateManagerError::ApplyBlockFailed(
+                format!(
+                    "Supply mismatch: UTXO sum {} != StateManager total supply {}. State corruption detected!",
+                    calculated_supply, self.current_total_supply
+                )
+            ));
+        }
+
+        // Get current Verkle root (which includes supply leaf)
+        let root = self.get_root_hash()?;
+        
+        // Verify snapshot root matches current root (basic consistency)
+        if let Some(snapshot) = self.snapshots.last() {
+            if snapshot.root != root {
+                return Err(StateManagerError::ApplyBlockFailed(
+                    "Root hash mismatch between snapshot and current tree".to_string()
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl From<CoreError> for StateManagerError {
@@ -547,7 +632,7 @@ mod tests {
     use crate::core::crypto::Hash;
     use crate::core::dag::BlockNode;
     use crate::core::state::storage::MemoryStorage;
-    use crate::core::state::transaction::{TxOutput, Transaction};
+    use crate::core::state::transaction::{TxOutput, Transaction, TxInput, SigHashType};
     use std::collections::HashSet;
 
     fn make_coinbase_transaction(value: u64, pubkey_hash: Hash) -> Transaction {
@@ -680,7 +765,7 @@ mod tests {
     fn test_state_manager_get_root_hash() {
         let storage = MemoryStorage::new();
         let tree = VerkleTree::new(storage).expect("failed to create VerkleTree");
-        let manager = StateManager::new(tree).expect("failed to create StateManager");
+        let mut manager = StateManager::new(tree).expect("failed to create StateManager");
 
         let root = manager.get_root_hash().expect("failed to get root hash");
         assert_eq!(root.len(), 32);
@@ -784,4 +869,94 @@ mod tests {
         assert_eq!(manager.snapshots.len(), 4); // genesis + 3 blocks
         assert_eq!(manager.current_height, 3);
     }
+
+    #[test]
+    fn test_state_manager_atomic_rollback_on_error() {
+        // CRITICAL: Test automatic rollback when apply_block encounters error
+        let storage = MemoryStorage::new();
+        let tree = VerkleTree::new(storage).expect("failed to create VerkleTree");
+        let mut manager = StateManager::new(tree).expect("failed to create StateManager");
+        let mut utxo = UtxoSet::new();
+
+        // Apply first block successfully
+        let block1 = make_block(b"block-1", vec![make_coinbase_transaction(10, Hash::new(b"alice"))]);
+        manager.apply_block(&block1, &mut utxo).expect("apply block 1 failed");
+        let root_after_block1 = manager.get_root_hash().expect("failed to get root");
+        let height_after_block1 = manager.current_height;
+        let supply_after_block1 = manager.current_total_supply;
+
+        // Prepare invalid transaction (non-existent input)
+        let invalid_tx = Transaction { 
+            execution_payload: Vec::new(), 
+            contract_address: None, 
+            gas_limit: 0, 
+            max_fee_per_gas: 0,
+            id: Hash::new(b"invalid_tx"),
+            inputs: vec![TxInput {
+                prev_tx: Hash::new(b"nonexistent"),
+                index: 0,
+                signature: vec![],
+                pubkey: vec![],
+                sighash_type: SigHashType::All,
+            }],
+            outputs: vec![TxOutput {
+                value: 50,
+                pubkey_hash: Hash::new(b"recipient"),
+            }],
+            chain_id: 1,
+            locktime: 0,
+        };
+
+        let block2_invalid = make_block(b"block-2-invalid", vec![invalid_tx]);
+
+        // Apply block with invalid transaction - should rollback
+        let result = manager.apply_block(&block2_invalid, &mut utxo);
+        assert!(result.is_err(), "Expected apply_block to fail");
+
+        // Verify rollback occurred: height, supply, root should be restored
+        assert_eq!(manager.current_height, height_after_block1, "Height was not rolled back");
+        assert_eq!(manager.current_total_supply, supply_after_block1, "Supply was not rolled back");
+        assert_eq!(
+            manager.get_root_hash().expect("failed to get root"),
+            root_after_block1,
+            "Root was not rolled back"
+        );
+
+        // Verify UTXO state also rolled back
+        assert_eq!(utxo.utxos.len(), 1, "UTXO was not rolled back");
+        assert_eq!(manager.outpoint_to_key.len(), 1, "outpoint_to_key was not rolled back");
+        assert_eq!(manager.prune_markers.len(), 0, "prune_markers was not rolled back");
+    }
+
+    #[test]
+    fn test_state_manager_supply_consistency_check() {
+        // CRITICAL: Test cross-check between UTXO supply and StateManager tracked supply
+        let storage = MemoryStorage::new();
+        let tree = VerkleTree::new(storage).expect("failed to create VerkleTree");
+        let mut manager = StateManager::new(tree).expect("failed to create StateManager");
+        let mut utxo = UtxoSet::new();
+
+        // Apply block with coinbase
+        let block1 = make_block(b"block-1", vec![make_coinbase_transaction(100, Hash::new(b"alice"))]);
+        manager.apply_block(&block1, &mut utxo).expect("apply block 1 failed");
+
+        // Cross-check should pass
+        let result = manager.cross_check_supply_consistency(&utxo);
+        assert!(result.is_ok(), "Supply consistency check failed: {:?}", result);
+
+        // Manually corrupt UTXO set (add extra value)
+        let extra_tx = Hash::new(b"fake_tx");
+        utxo.utxos.insert(
+            (extra_tx, 0),
+            TxOutput {
+                value: 50,
+                pubkey_hash: Hash::new(b"fake_owner"),
+            },
+        );
+
+        // Cross-check should now fail
+        let result = manager.cross_check_supply_consistency(&utxo);
+        assert!(result.is_err(), "Supply consistency check should have detected mismatch");
+    }
 }
+

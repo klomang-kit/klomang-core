@@ -26,32 +26,10 @@ use std::collections::HashSet;
 // PAYLOAD & KEY GENERATOR UTILITIES - Deterministic generation from seed
 // ============================================================================
 
-/// Generate deterministic but unique signature (64 bytes) from seed using real Schnorr signing key.
-fn generate_signature_from_seed(seed: u64) -> Vec<u8> {
-    let keypair = KeyPairWrapper::from_seed(seed)
-        .expect("deterministic keypair derivation should not fail");
-    let message = seed.to_be_bytes();
-    keypair.sign(&message).to_bytes().to_vec()
-}
-
-/// Generate deterministic public key (33 bytes) from seed using real Schnorr key material.
-fn generate_pubkey_from_seed(seed: u64) -> Vec<u8> {
-    let keypair = KeyPairWrapper::from_seed(seed)
-        .expect("deterministic keypair derivation should not fail");
-    keypair.public_key().to_bytes().to_vec()
-}
-
 /// Generate deterministic 32-byte hash from seed using cryptographic hash function.
 fn generate_hash_from_seed(seed: u64) -> [u8; 32] {
     let hash = Hash::new(&seed.to_le_bytes());
     *hash.as_bytes()
-}
-
-/// Generate deterministic sequence-based recipient key for make_output
-/// Ensures each call with different base_seed generates unique but reproducible output
-fn generate_recipient_key(base_seed: u64, offset: u64) -> [u8; 32] {
-    let seed = base_seed.wrapping_add(offset);
-    generate_hash_from_seed(seed)
 }
 
 // ============================================================================
@@ -422,7 +400,7 @@ fn test_29_verkle_tree_creation() {
 #[test]
 fn test_30_verkle_tree_root_consistency() {
     let storage = MemoryStorage::new();
-    let tree = VerkleTree::new(storage).expect("create tree");
+    let mut tree = VerkleTree::new(storage).expect("create tree");
     let root1 = tree.get_root().expect("get root");
     let root2 = tree.get_root().expect("get root");
     assert_eq!(root1, root2);
@@ -501,7 +479,7 @@ fn test_36_state_manager_apply_empty_block() {
 fn test_37_state_manager_get_root() {
     let storage = MemoryStorage::new();
     let tree = VerkleTree::new(storage).expect("create tree");
-    let manager = StateManager::new(tree).expect("create manager");
+    let mut manager = StateManager::new(tree).expect("create manager");
     if let Ok(root) = manager.get_root_hash() {
         assert_eq!(root.len(), 32);
     }
@@ -720,7 +698,7 @@ fn test_58_workflow_state_snapshots() {
         let block = make_block(&i.to_le_bytes(), vec![], HashSet::new());
         manager.apply_block(&block, &mut utxo).ok();
     }
-    assert!(manager.snapshots.len() > 0);
+    assert!(!manager.snapshots.is_empty());
 }
 
 #[test]
@@ -729,7 +707,7 @@ fn test_59_workflow_block_commitment() {
     let mut tree = VerkleTree::new(storage).expect("create tree");
     let key = generate_hash_from_seed(600);
     let value = generate_hash_from_seed(601);
-    let _ = tree.insert(key, value.to_vec());
+    tree.insert(key, value.to_vec());
     let proof = tree.generate_proof(key).expect("generate proof");
     let valid = tree.verify_proof(&proof).expect("verify proof");
     assert!(valid);
@@ -814,7 +792,7 @@ fn test_66_ghostdag_ordering() {
     let mut dag = Dag::new();
     dag.add_block(genesis).ok();
     let ordering = ghostdag.get_ordering(&dag);
-    assert!(ordering.len() >= 1);
+    assert!(!ordering.is_empty());
 }
 
 #[test]
@@ -824,7 +802,7 @@ fn test_67_verkle_large_dataset() {
     for i in 0u16..50 {
         let key = generate_hash_from_seed(700 + i as u64);
         let value = generate_hash_from_seed(800 + i as u64);
-        let _ = tree.insert(key, value.to_vec());
+        tree.insert(key, value.to_vec());
     }
     let root = tree.get_root().expect("get root");
     assert_eq!(root.len(), 32);

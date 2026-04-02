@@ -184,7 +184,7 @@ mod tests {
     fn test_reward_halving() {
         let (m1, i1, p1) = block_reward(100_000, 10);
         assert_eq!(m1 + i1, (50 * UNIT) as u64);
-        assert_eq!(p1, (1 * UNIT) as u64);
+        assert_eq!(p1, UNIT as u64);
 
         let (m2, i2, p2) = block_reward(200_000, 10);
         assert_eq!(m2 + i2, (25 * UNIT) as u64);

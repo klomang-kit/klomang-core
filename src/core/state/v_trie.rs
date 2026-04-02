@@ -3,7 +3,7 @@ use crate::core::crypto::verkle::PolynomialCommitment;
 use crate::core::errors::CoreError;
 use crate::core::state::storage::Storage;
 use ark_ec::Group;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use ark_ff::{Field, PrimeField};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
@@ -20,6 +20,12 @@ const KEY_SIZE: usize = 32;
 
 /// Special key for storing total supply in Verkle Tree
 const TOTAL_SUPPLY_KEY: [u8; 32] = [0u8; 32];
+
+/// Node data yang di-cache untuk incremental updates
+#[derive(Debug, Clone)]
+struct CachedNode {
+    commitment: Option<Commitment>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofType {
@@ -45,13 +51,19 @@ pub struct VerkleProof {
     pub gas_fee_distribution: Option<GasFeeWitness>,
 }
 
-/// In-memory storage-backed 256-ary Verkle tree.
+/// In-memory storage-backed 256-ary Verkle tree with commitment caching.
 #[derive(Debug)]
 pub struct VerkleTree<S: Storage> {
     storage: S,
     pc: PolynomialCommitment,
+    /// Cache commitments di setiap node untuk incremental updates
+    commitment_cache: HashMap<Vec<u8>, CachedNode>,
     empty_subtree_roots: Vec<[u8; 32]>,
     empty_subtree_scalars: Vec<<EdwardsProjective as Group>::ScalarField>,
+    /// Root hash cache
+    root_cache: Option<[u8; 32]>,
+    /// Dirty flag untuk track perubahan yang memerlukan recompute root
+    dirty: bool,
     pruned_keys: HashSet<Vec<u8>>,
 }
 
@@ -64,8 +76,11 @@ impl<S: Storage> VerkleTree<S> {
         let mut tree = Self {
             storage,
             pc,
+            commitment_cache: HashMap::new(),
             empty_subtree_roots,
             empty_subtree_scalars,
+            root_cache: None,
+            dirty: true,
             pruned_keys: HashSet::new(),
         };
         tree.ensure_node(&[]);
@@ -73,6 +88,9 @@ impl<S: Storage> VerkleTree<S> {
     }
 
     pub fn insert(&mut self, key: [u8; KEY_SIZE], value: Vec<u8>) {
+        // Mark tree as dirty since we're modifying it
+        self.dirty = true;
+        
         let mut path = Vec::new();
         self.ensure_node(&path);
 
@@ -82,12 +100,18 @@ impl<S: Storage> VerkleTree<S> {
         }
 
         self.set_node_value(&path, Some(value));
+        
+        // Invalidate cache for this path and all parent paths
+        self.invalidate_path_cache(&path);
     }
 
     /// Apply state transition with hardcoded anti-burn enforcement and supply cap validation
     pub fn apply_state_transition(&mut self, updates: Vec<([u8; KEY_SIZE], Vec<u8>)>, new_total_supply: u128) -> Result<(), CoreError> {
         use crate::core::consensus::economic_constants;
         use crate::core::state::transaction::TxOutput;
+
+        // Mark tree as dirty since we're applying state transitions
+        self.dirty = true;
 
         // HARD CODED ANTI-BURN: Block any updates that would send to burn address
         for (key, value) in &updates {
@@ -137,6 +161,9 @@ impl<S: Storage> VerkleTree<S> {
     }
 
     pub fn prune_key(&mut self, key: [u8; KEY_SIZE]) -> Result<(), CoreError> {
+        // Mark tree as dirty since we're modifying it
+        self.dirty = true;
+        
         let mut path = Vec::new();
         for &byte in key.iter().take(KEY_SIZE) {
             path.push(byte);
@@ -149,11 +176,69 @@ impl<S: Storage> VerkleTree<S> {
 
         self.storage.delete(&storage_key);
         self.pruned_keys.insert(path.clone());
+        
+        // Invalidate cache for this path and all parent paths
+        self.invalidate_path_cache(&path);
+        
+        // CRITICAL: Recursive cleanup - remove empty parent nodes up the tree
+        self.recursive_cleanup_empty_nodes(&path)?;
+        
         Ok(())
     }
 
-    pub fn get_root(&self) -> Result<[u8; 32], CoreError> {
-        self.compute_node_root_hash(&[], 0)
+    /// CRITICAL: Recursively remove empty internal nodes to prevent orphan nodes accumulation
+    /// After deleting a leaf, check parent nodes: if a parent has no children, delete it too
+    fn recursive_cleanup_empty_nodes(&mut self, path: &[u8]) -> Result<(), CoreError> {
+        // Try to clean up parent nodes from leaf to root
+        for depth in (0..path.len()).rev() {
+            let parent_path = &path[..depth];
+            
+            // Check if parent node is empty (has no valid children)
+            let parent_key = Self::key_for_path(parent_path);
+            let has_children = (0..VERKLE_RADIX)
+                .any(|child_idx| {
+                    let mut child_path = parent_path.to_vec();
+                    child_path.push(child_idx as u8);
+                    let child_key = Self::key_for_path(&child_path);
+                    self.storage.get(&child_key).is_some() && !self.pruned_keys.contains(&child_path)
+                });
+            
+            // If parent has no children and it's not the root, delete it
+            if !has_children && depth > 0 {
+                self.storage.delete(&parent_key);
+                self.pruned_keys.insert(parent_path.to_vec());
+                self.invalidate_path_cache(parent_path);
+            } else {
+                // Stop cleanup if we find a parent with children (tree is still valid)
+                break;
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Invalidate cache for a path and all its parent paths
+    fn invalidate_path_cache(&mut self, path: &[u8]) {
+        // Invalidate from leaf to root
+        for i in 0..=path.len() {
+            let cache_path = &path[..i];
+            self.commitment_cache.remove(cache_path);
+        }
+        // Also invalidate root cache
+        self.root_cache = None;
+    }
+
+    pub fn get_root(&mut self) -> Result<[u8; 32], CoreError> {
+        if !self.dirty {
+            if let Some(cached_root) = self.root_cache {
+                return Ok(cached_root);
+            }
+        }
+        
+        let root = self.compute_node_root_hash(&[], 0)?;
+        self.root_cache = Some(root);
+        self.dirty = false;
+        Ok(root)
     }
 
     pub fn storage_clone(&self) -> S
@@ -163,11 +248,11 @@ impl<S: Storage> VerkleTree<S> {
         self.storage.clone()
     }
 
-    pub fn generate_proof(&self, key: [u8; KEY_SIZE]) -> Result<VerkleProof, CoreError> {
+    pub fn generate_proof(&mut self, key: [u8; KEY_SIZE]) -> Result<VerkleProof, CoreError> {
         self.generate_proof_with_witness(key, None)
     }
 
-    pub fn generate_proof_with_witness(&self, key: [u8; KEY_SIZE], gas_witness: Option<GasFeeWitness>) -> Result<VerkleProof, CoreError> {
+    pub fn generate_proof_with_witness(&mut self, key: [u8; KEY_SIZE], gas_witness: Option<GasFeeWitness>) -> Result<VerkleProof, CoreError> {
         let mut siblings = Vec::with_capacity(KEY_SIZE * VERKLE_RADIX);
         let mut path = Vec::new();
         let mut path_exists = true;
@@ -366,8 +451,15 @@ impl<S: Storage> VerkleTree<S> {
         self.storage.put(key, Self::serialize_node(value.as_deref()));
     }
 
-    fn compute_node_commitment(&self, path: &[u8], depth: usize) -> Result<Commitment, CoreError> {
-        if depth == KEY_SIZE {
+    fn compute_node_commitment(&mut self, path: &[u8], depth: usize) -> Result<Commitment, CoreError> {
+        let key = path.to_vec();
+        if let Some(cached) = self.commitment_cache.get(&key) {
+            if let Some(commitment) = &cached.commitment {
+                return Ok(commitment.clone());
+            }
+        }
+
+        let commitment = if depth == KEY_SIZE {
             let leaf_scalar = self
                 .get_node_value(path)
                 .as_deref()
@@ -375,28 +467,31 @@ impl<S: Storage> VerkleTree<S> {
                 .unwrap_or(<EdwardsProjective as Group>::ScalarField::ZERO);
 
             let poly = DensePolynomial::from_coefficients_vec(vec![leaf_scalar]);
-            return self.pc.commit(&poly)
-                .map_err(|e| CoreError::PolynomialCommitmentError(format!("Failed to commit leaf: {}", e)));
-        }
+            self.pc.commit(&poly)
+                .map_err(|e| CoreError::PolynomialCommitmentError(format!("Failed to commit leaf: {}", e)))?
+        } else {
+            let empty_scalar = self.empty_subtree_scalar(depth + 1);
+            let mut coeffs = Vec::with_capacity(VERKLE_RADIX);
 
-        let empty_scalar = self.empty_subtree_scalar(depth + 1);
-        let mut coeffs = Vec::with_capacity(VERKLE_RADIX);
+            for child_index in 0..VERKLE_RADIX {
+                let mut child_path = path.to_vec();
+                child_path.push(child_index as u8);
+                let child_scalar = if self.node_exists(&child_path) {
+                    let child_root = self.compute_node_root_hash(&child_path, depth + 1)?;
+                    <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
+                } else {
+                    empty_scalar
+                };
+                coeffs.push(child_scalar);
+            }
 
-        for child_index in 0..VERKLE_RADIX {
-            let mut child_path = path.to_vec();
-            child_path.push(child_index as u8);
-            let child_scalar = if self.node_exists(&child_path) {
-                let child_root = self.compute_node_root_hash(&child_path, depth + 1)?;
-                <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
-            } else {
-                empty_scalar
-            };
-            coeffs.push(child_scalar);
-        }
+            let poly = DensePolynomial::from_coefficients_vec(coeffs);
+            self.pc.commit(&poly)
+                .map_err(|e| CoreError::PolynomialCommitmentError(format!("Failed to commit node polynomial: {}", e)))?
+        };
 
-        let poly = DensePolynomial::from_coefficients_vec(coeffs);
-        self.pc.commit(&poly)
-            .map_err(|e| CoreError::PolynomialCommitmentError(format!("Failed to commit node polynomial: {}", e)))
+        self.commitment_cache.insert(key, CachedNode { commitment: Some(commitment.clone()) });
+        Ok(commitment)
     }
 
     fn compute_empty_subtree_constants(
@@ -431,7 +526,7 @@ impl<S: Storage> VerkleTree<S> {
         self.empty_subtree_scalars[depth]
     }
 
-    fn compute_node_root_hash(&self, path: &[u8], depth: usize) -> Result<[u8; 32], CoreError> {
+    fn compute_node_root_hash(&mut self, path: &[u8], depth: usize) -> Result<[u8; 32], CoreError> {
         let commitment = self.compute_node_commitment(path, depth)?;
         Self::commitment_root_hash(&commitment)
     }
@@ -459,6 +554,10 @@ impl<S: Storage + Clone> Clone for VerkleTree<S> {
         cloned.pruned_keys = self.pruned_keys.clone();
         cloned.empty_subtree_roots = self.empty_subtree_roots.clone();
         cloned.empty_subtree_scalars = self.empty_subtree_scalars.clone();
+        // Cache is not cloned to avoid stale data
+        cloned.commitment_cache = HashMap::new();
+        cloned.root_cache = None;
+        cloned.dirty = true;
         cloned
     }
 }

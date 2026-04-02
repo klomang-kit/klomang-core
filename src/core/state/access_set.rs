@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 /// Represents the set of keys accessed by a transaction
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct AccessSet {
     pub read_set: HashSet<[u8; 32]>,
     pub write_set: HashSet<[u8; 32]>,
@@ -9,10 +9,7 @@ pub struct AccessSet {
 
 impl AccessSet {
     pub fn new() -> Self {
-        Self {
-            read_set: HashSet::new(),
-            write_set: HashSet::new(),
-        }
+        Self::default()
     }
 
     pub fn has_conflict(&self, other: &AccessSet) -> bool {

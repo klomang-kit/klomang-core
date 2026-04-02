@@ -12,8 +12,7 @@ use std::collections::HashSet;
 
 /// Helper to create a simple transaction
 fn make_tx(outputs: Vec<TxOutput>) -> Transaction {
-    let mut tx = Transaction::new(Vec::new(), outputs);
-    tx
+    Transaction::new(Vec::new(), outputs)
 }
 
 /// Helper to create a block
@@ -103,7 +102,7 @@ fn test_genesis_block() {
 fn test_dag_structure() {
     let mut dag = Dag::new();
 
-    let mut genesis_parents = HashSet::new();
+    let genesis_parents = HashSet::new();
     let genesis = make_block(b"genesis", vec![], genesis_parents);
     
     dag.add_block(genesis.clone()).expect("Failed to add genesis");
@@ -115,7 +114,7 @@ fn test_dag_structure() {
 fn test_multiple_blocks_in_dag() {
     let mut dag = Dag::new();
     
-    let mut gen_parents = HashSet::new();
+    let gen_parents = HashSet::new();
     let gen = make_block(b"genesis", vec![], gen_parents);
     dag.add_block(gen.clone()).expect("Failed to add genesis");
     
@@ -144,7 +143,7 @@ fn test_block_commitment_verification() {
 fn test_dag_parent_child_relationships() {
     let mut dag = Dag::new();
     
-    let mut gen_parents = HashSet::new();
+    let gen_parents = HashSet::new();
     let gen = make_block(b"genesis", vec![], gen_parents);
     dag.add_block(gen.clone()).expect("Failed to add genesis");
     
@@ -161,9 +160,9 @@ fn test_dag_parent_child_relationships() {
 #[test]
 fn test_ghostdag_consensus() {
     let mut dag = Dag::new();
-    let mut ghostdag = GhostDag::new(24);
+    let _ghostdag = GhostDag::new(24);
     
-    let mut gen_parents = HashSet::new();
+    let gen_parents = HashSet::new();
     let gen = make_block(b"genesis", vec![], gen_parents);
     dag.add_block(gen.clone()).expect("Failed to add genesis");
     
@@ -173,7 +172,7 @@ fn test_ghostdag_consensus() {
     dag.add_block(block1.clone()).expect("Failed to add block1");
     
     let tips = dag.get_all_hashes();
-    assert!(tips.len() > 0);
+    assert!(!tips.is_empty());
 }
 
 /// Test 11: Empty transaction block
@@ -213,7 +212,7 @@ fn test_utxo_spend_and_create() {
 fn test_dag_retrieval_consistency() {
     let mut dag = Dag::new();
     
-    let mut parents = HashSet::new();
+    let parents = HashSet::new();
     let block = make_block(b"test_block", vec![], parents);
     
     dag.add_block(block.clone()).expect("Failed to add block");
@@ -246,10 +245,10 @@ fn test_transaction_chain() {
 fn test_complete_workflow_integration() {
     // Setup DAG
     let mut dag = Dag::new();
-    let mut ghostdag = GhostDag::new(24);
+    let _ghostdag = GhostDag::new(24);
     
     // Create genesis
-    let mut gen_parents = HashSet::new();
+    let gen_parents = HashSet::new();
     let genesis = make_block(b"genesis", vec![], gen_parents);
     dag.add_block(genesis.clone()).expect("Failed to add genesis");
     
@@ -271,7 +270,6 @@ fn test_complete_workflow_integration() {
 #[test]
 fn test_parallel_execution_no_conflict() {
     use klomang_core::core::scheduler::parallel::ParallelScheduler;
-    use klomang_core::core::state::transaction::TxInput;
 
     // Create two transactions with different outputs (no conflict)
     let tx1 = Transaction::new(
@@ -295,7 +293,6 @@ fn test_parallel_execution_no_conflict() {
 #[test]
 fn test_parallel_execution_conflict() {
     use klomang_core::core::scheduler::parallel::ParallelScheduler;
-    use klomang_core::core::state::transaction::TxInput;
 
     // Create transactions that might conflict (same output key)
     // For simplicity, create txs with same hash_with_index

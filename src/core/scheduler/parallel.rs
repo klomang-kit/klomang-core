@@ -42,8 +42,7 @@ impl ParallelScheduler {
             let mut to_remove = Vec::new();
 
             // Find non-conflicting transactions
-            for i in 0..remaining.len() {
-                let candidate = &remaining[i];
+            for (i, candidate) in remaining.iter().enumerate() {
                 let conflicts = current_group.iter().any(|existing: &ScheduledTransaction| {
                     existing.access_set.has_conflict(&candidate.access_set)
                 });
@@ -87,7 +86,7 @@ impl ParallelScheduler {
 
         for (group_idx, group) in groups.into_iter().enumerate() {
             // Backup state before executing group for atomic rollback
-            let backup_tree = state_manager.tree.clone();
+            let mut backup_tree = state_manager.tree.clone();
             let backup_height = state_manager.current_height;
             let backup_snapshots = state_manager.snapshots.clone();
             let backup_snapshot_storages = state_manager.snapshot_storages.clone();

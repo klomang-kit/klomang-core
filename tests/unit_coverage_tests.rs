@@ -108,11 +108,17 @@ fn test_schnorr_tagged_hash_different_tags() {
 }
 
 #[test]
-fn test_schnorr_tx_message_consistency() {
+fn test_schnorr_compute_sighash_consistency() {
     let tx = Transaction { execution_payload: Vec::new(), contract_address: None, gas_limit: 0, max_fee_per_gas: 0,
         chain_id: 1,
         id: Hash::new(b"tx1"),
-        inputs: vec![],
+        inputs: vec![TxInput {
+            prev_tx: Hash::new(b"prev"),
+            index: 0,
+            signature: vec![],
+            pubkey: vec![],
+            sighash_type: SigHashType::All,
+        }],
         outputs: vec![TxOutput {
             value: 1000,
             pubkey_hash: Hash::new(b"pubkey"),
@@ -120,8 +126,8 @@ fn test_schnorr_tx_message_consistency() {
         locktime: 0,
     };
     
-    let msg1 = schnorr::tx_message(&tx);
-    let msg2 = schnorr::tx_message(&tx);
+    let msg1 = schnorr::compute_sighash(&tx, 0, SigHashType::All).unwrap();
+    let msg2 = schnorr::compute_sighash(&tx, 0, SigHashType::All).unwrap();
     
     assert_eq!(msg1, msg2);
 }
@@ -418,8 +424,8 @@ fn test_core_error_display_variants() {
     let c = CoreError::DuplicateBlock;
     assert_eq!(format!("{}", c), "Duplicate block");
 
-    let c = CoreError::ConsensusError;
-    assert_eq!(format!("{}", c), "Consensus error");
+    let c = CoreError::ConsensusError("consensus fail".to_string());
+    assert_eq!(format!("{}", c), "Consensus error: consensus fail");
 
     let c = CoreError::TransactionError("tx-fail".to_string());
     assert_eq!(format!("{}", c), "Transaction error: tx-fail");
@@ -961,7 +967,7 @@ fn test_ghostdag_build_blue_set_k_parameter() {
     let ghostdag_large = GhostDag::new(100);
     
     assert_eq!(ghostdag_small.k, 1);
-    assert_eq!(ghostdag_large.k, 100);
+    assert_eq!(ghostdag_large.k, 64);
 }
 
 #[test]

@@ -1,15 +1,14 @@
 /// Final Economic Policy Constants - IMMUTABLE AND LOCKED
-/// 
+///
 /// This module locks all fundamental economic parameters to prevent deviation
 /// from the agreed-upon economic model for Klomang Core.
-/// 
+///
 /// All values are compile-time constants and cannot be changed at runtime.
 /// Any modification requires code review and coordinated network upgrade.
-
+//
 // ============================================================================
 // SUPPLY CAP (Hard Cap 600M Nano-SLUG)
 // ============================================================================
-
 /// Maximum total supply: 600 million SLUG coins
 /// In smallest units (Nano-SLUG): 600,000,000 * 10^8
 pub const MAX_GLOBAL_SUPPLY_NANO_SLUG: u128 = 600_000_000_000_000_000;
@@ -149,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_no_burn_enforcement() {
-        assert!(NO_BURN_ENFORCEMENT_ACTIVE);
+        const _: () = assert!(NO_BURN_ENFORCEMENT_ACTIVE);
         assert!(!verify_non_burn_address(&BURN_ADDRESS));
     }
 }

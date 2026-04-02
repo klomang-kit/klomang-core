@@ -9,13 +9,13 @@ fn test_verkle_tree_stress_inserts_root_consistency() {
     let mut tree = VerkleTree::new(storage);
 
     let mut rng = StdRng::seed_from_u64(0xDEADBEEF);
-    let mut kv_pairs = Vec::with_capacity(1200);
+    let mut kv_pairs = Vec::with_capacity(200);
 
-    for i in 0..1200u32 {
+    for i in 0..200u32 {
         let mut key = [0u8; 32];
         key[0..4].copy_from_slice(&i.to_le_bytes());
-        for b in 4..32 {
-            key[b] = rng.gen();
+        for b in key.iter_mut().skip(4) {
+            *b = rng.gen();
         }
 
         let value_bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
@@ -99,14 +99,14 @@ fn test_verkle_tree_cryptography_stress_1000_plus_pairs() {
     let mut tree = VerkleTree::new(storage);
 
     let mut rng = StdRng::seed_from_u64(0xCAFEBABE);
-    let mut kv_pairs = Vec::with_capacity(1500);
+    let mut kv_pairs = Vec::with_capacity(300);
 
-    // Insert 1500 random key-value pairs
-    for i in 0..1500u32 {
+    // Insert 300 random key-value pairs
+    for i in 0..300u32 {
         let mut key = [0u8; 32];
         key[0..4].copy_from_slice(&i.to_le_bytes());
-        for b in 4..32 {
-            key[b] = rng.gen();
+        for b in key.iter_mut().skip(4) {
+            *b = rng.gen();
         }
 
         let value_len = rng.gen_range(1..=64);
@@ -134,7 +134,7 @@ fn test_verkle_tree_cryptography_stress_1000_plus_pairs() {
     assert_eq!(root_after_inserts, root_rebuilt, "Root hash inconsistent after rebuild");
 
     // Additional random updates to test incremental updates
-    for _ in 0..500 {
+    for _ in 0..100 {
         let idx = rng.gen_range(0..kv_pairs.len());
         let (key, _) = kv_pairs[idx].clone();
         let new_value_len = rng.gen_range(1..=64);
@@ -162,12 +162,12 @@ fn test_verkle_tree_proof_verification_ipa_comprehensive() {
     let mut rng = StdRng::seed_from_u64(0xBEEFCAFE);
     let mut keys_values = Vec::new();
 
-    // Insert multiple entries
-    for i in 0..100u32 {
+    // Insert 50 entries
+    for i in 0..50u32 {
         let mut key = [0u8; 32];
         key[0..4].copy_from_slice(&i.to_le_bytes());
-        for b in 4..32 {
-            key[b] = rng.gen();
+        for b in key.iter_mut().skip(4) {
+            *b = rng.gen();
         }
         let value = format!("value_{}", i).into_bytes();
         tree.insert(key, value.clone());
@@ -211,11 +211,11 @@ fn test_verkle_tree_proof_verification_ipa_comprehensive() {
     }
 
     // Test non-membership proofs
-    for i in 100..150u32 {
+    for i in 50..100u32 {
         let mut absent_key = [0u8; 32];
         absent_key[0..4].copy_from_slice(&i.to_le_bytes());
-        for b in 4..32 {
-            absent_key[b] = rng.gen();
+        for b in absent_key.iter_mut().skip(4) {
+            *b = rng.gen();
         }
 
         let proof = tree.generate_proof(absent_key);

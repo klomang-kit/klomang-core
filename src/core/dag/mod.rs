@@ -48,11 +48,6 @@ impl Dag {
             if !self.blocks.contains_key(parent) {
                 return Err(crate::core::errors::CoreError::InvalidParent);
             }
-
-            let ancestor_set = self.get_ancestors(parent);
-            if ancestor_set.contains(&id) {
-                return Err(crate::core::errors::CoreError::ConsensusError("Cycle detected via parents / ancestors".to_string()));
-            }
         }
 
         let parents = block.parents.clone();

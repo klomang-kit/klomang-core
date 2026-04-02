@@ -1,7 +1,6 @@
 use k256::schnorr::{SigningKey, VerifyingKey, Signature};
 use k256::ecdsa::signature::{Signer, Verifier};
 use rand::rngs::OsRng;
-use crate::core::crypto::hash::Hash;
 use crate::core::errors::CoreError;
 use crate::core::state::transaction::{Transaction, SigHashType};
 use blake3;
@@ -43,8 +42,7 @@ impl KeyPairWrapper {
     }
 
     pub fn sign(&self, msg: &[u8]) -> Signature {
-        let msg_hash = Hash::new(msg);
-        self.signing_key.sign(&msg_hash.as_bytes()[..])
+        self.signing_key.sign(msg)
     }
 }
 
@@ -55,8 +53,7 @@ impl Default for KeyPairWrapper {
 }
 
 pub fn verify(pubkey: &VerifyingKey, msg: &[u8], signature: &Signature) -> bool {
-    let msg_hash = Hash::new(msg);
-    pubkey.verify(&msg_hash.as_bytes()[..], signature).is_ok()
+    pubkey.verify(msg, signature).is_ok()
 }
 
 /// BIP340-style tagged hash for domain separation
@@ -137,20 +134,6 @@ pub fn compute_sighash(
     Ok(tagged_hash(TAG_TX_SIGN, &serialized))
 }
 
-/// Legacy compatibility - compute message hash for transaction
-pub fn tx_message(tx: &Transaction) -> [u8; 32] {
-    let mut data = Vec::new();
-    for input in &tx.inputs {
-        data.extend_from_slice(input.prev_tx.as_bytes());
-        data.extend_from_slice(&input.index.to_be_bytes());
-    }
-    for output in &tx.outputs {
-        data.extend_from_slice(&output.value.to_be_bytes());
-        data.extend_from_slice(output.pubkey_hash.as_bytes());
-    }
-    tagged_hash(TAG_TX_SIGN, &data)
-}
-
 /// Verify Schnorr signature with BIP340-compliance
 pub fn verify_schnorr(
     pubkey_bytes: &[u8; 32],
@@ -171,7 +154,7 @@ pub fn verify_schnorr(
     Ok(pubkey.verify(&msg_hash, &sig).is_ok())
 }
 
-/// Batch verify multiple Schnorr signatures
+/// Batch verify multiple Schnorr signatures with parallel processing
 pub fn batch_verify(
     items: &[(VerifyingKey, [u8; 32], Signature)],
 ) -> Result<bool, CoreError> {
@@ -179,9 +162,47 @@ pub fn batch_verify(
         return Ok(true);
     }
     
-    for (pubkey, msg, sig) in items {
-        if pubkey.verify(msg, sig).is_err() {
-            return Ok(false);
+    // Use parallel verification for better TPS
+    use std::thread;
+    use std::sync::mpsc;
+    
+    let chunk_size = 10; // Process in chunks for optimal parallelism
+    let chunks: Vec<_> = items.chunks(chunk_size).collect();
+    
+    if chunks.len() == 1 {
+        // Single chunk, verify sequentially
+        for (pubkey, msg, sig) in items {
+            if pubkey.verify(msg, sig).is_err() {
+                return Ok(false);
+            }
+        }
+    } else {
+        // Multiple chunks, use parallel verification
+        let (tx, rx) = mpsc::channel();
+        
+        for chunk in chunks {
+            let tx = tx.clone();
+            let chunk = chunk.to_vec();
+            thread::spawn(move || {
+                let mut valid = true;
+                for (pubkey, msg, sig) in chunk {
+                    if pubkey.verify(&msg, &sig).is_err() {
+                        valid = false;
+                        break;
+                    }
+                }
+                tx.send(valid).unwrap();
+            });
+        }
+        
+        // Drop the original sender so receiver knows when done
+        drop(tx);
+        
+        // Collect results
+        for result in rx {
+            if !result {
+                return Ok(false);
+            }
         }
     }
     

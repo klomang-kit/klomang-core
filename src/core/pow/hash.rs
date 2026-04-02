@@ -43,32 +43,36 @@ pub fn is_valid_pow(hash: &Hash, target: u64) -> bool {
     hash_val < target
 }
 
+/// Parameters for block mining
+#[derive(Clone)]
+pub struct BlockMiningParams<'a> {
+    pub header: &'a [u8],
+    pub target: u64,
+    pub miner_address: &'a [u8],
+    pub node_reward_address: &'a [u8],
+    pub timestamp: u64,
+    pub difficulty: u64,
+    pub parent_hashes: &'a [crate::core::crypto::Hash],
+    pub verkle_root: &'a [u8; 32],
+}
+
 /// Mine a block by finding a valid nonce with miner and node reward addresses
 /// Includes address fields in hashed input to ensure explicit minting destination.
 /// This guards coinbase issuance by making reward addresses part of PoW input.
 /// Now includes all critical header fields for comprehensive pre-image attack protection.
-pub fn mine_block(
-    header: &[u8],
-    target: u64,
-    miner_address: &[u8],
-    node_reward_address: &[u8],
-    timestamp: u64,
-    difficulty: u64,
-    parent_hashes: &[crate::core::crypto::Hash],
-    verkle_root: &[u8; 32],
-) -> Option<u64> {
-    if miner_address.is_empty() || node_reward_address.is_empty() {
+pub fn mine_block(params: &BlockMiningParams) -> Option<u64> {
+    if params.miner_address.is_empty() || params.node_reward_address.is_empty() {
         return None;
     }
 
-    let tx_merkle_root = Hash::new(header); // deterministic representation of payload header for PoW
+    let tx_merkle_root = Hash::new(params.header); // deterministic representation of payload header for PoW
 
     for nonce in 0..=u64::MAX {
         // Using the structured hash function that covers all header fields deterministically
         let hash = calculate_hash(
-            timestamp,
-            difficulty,
-            parent_hashes,
+            params.timestamp,
+            params.difficulty,
+            params.parent_hashes,
             0, // merit (blue_score) unknown for mining, typically set to 0 during candidate mining
             nonce,
             &tx_merkle_root,
@@ -78,13 +82,13 @@ pub fn mine_block(
         // (to preserve previous behavior and protect candidate pool uniqueness)
         let mut with_rewards = Vec::new();
         with_rewards.extend_from_slice(hash.as_bytes());
-        with_rewards.extend_from_slice(verkle_root);
-        with_rewards.extend_from_slice(miner_address);
-        with_rewards.extend_from_slice(node_reward_address);
+        with_rewards.extend_from_slice(params.verkle_root);
+        with_rewards.extend_from_slice(params.miner_address);
+        with_rewards.extend_from_slice(params.node_reward_address);
 
         let final_hash = Hash::new(&with_rewards);
 
-        if is_valid_pow(&final_hash, target) {
+        if is_valid_pow(&final_hash, params.target) {
             return Some(nonce);
         }
     }

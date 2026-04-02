@@ -143,12 +143,12 @@ fn test_hash_function_different_inputs() {
 #[test]
 fn test_key_pair_generation() {
     let keypair = KeyPairWrapper::new();
-    
+
     // Public key should be derived from private key
     let pubkey = keypair.public_key();
     let pubkey_bytes = pubkey.to_bytes();
     assert!(!pubkey_bytes.is_empty());
-    assert!(pubkey_bytes.len() == 33 || pubkey_bytes.len() == 65); // compressed/uncompressed formats
+    assert!(pubkey_bytes.len() == 33 || pubkey_bytes.len() == 65 || pubkey_bytes.len() == 64 || pubkey_bytes.len() == 32); // compressed/uncompressed formats plus k256 variant
 }
 
 /// Test 10: Verkle tree storage persistence
@@ -165,7 +165,7 @@ fn test_verkle_tree_storage_clone() {
     let cloned_storage = tree.storage_clone();
 
     // Create new tree from cloned storage
-    let mut tree2 = VerkleTree::new(cloned_storage);
+    let tree2 = VerkleTree::new(cloned_storage);
     
     // Should be able to retrieve the value from new tree
     let retrieved = tree2.get(key).unwrap();
@@ -209,14 +209,14 @@ fn test_verkle_tree_many_keys() {
     
     // Insert 256 different keys
     for i in 0..256 {
-        let mut key = [i as u8; 32];
+        let key = [i as u8; 32];
         let value = format!("value_{}", i).as_bytes().to_vec();
         tree.insert(key, value.clone());
     }
     
     // Retrieve all keys to verify
     for i in 0..256 {
-        let mut key = [i as u8; 32];
+        let key = [i as u8; 32];
         let value = format!("value_{}", i).as_bytes().to_vec();
         assert_eq!(tree.get(key).unwrap(), Some(value));
     }

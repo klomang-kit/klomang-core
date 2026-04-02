@@ -8,12 +8,11 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn make_coinbase_transaction(value: u64, pubkey_hash: Hash) -> Transaction {
-    let mut tx = Transaction::new(vec![], vec![TxOutput { value, pubkey_hash }]);
-    tx
+    Transaction::new(vec![], vec![TxOutput { value, pubkey_hash }])
 }
 
 fn make_test_block(transactions: Vec<Transaction>, timestamp: u64, difficulty: u64, nonce: u64) -> BlockNode {
-    let mut block = BlockNode {
+    BlockNode {
         id: Hash::new(b"block"),
         parents: HashSet::new(),
         children: HashSet::new(),
@@ -25,15 +24,13 @@ fn make_test_block(transactions: Vec<Transaction>, timestamp: u64, difficulty: u
         difficulty,
         nonce,
         transactions,
-    };
-
-    block
+    }
 }
 
 #[test]
 fn ghostdag_validate_block_success() {
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut dag = Dag::new();
+    let dag = Dag::new();
 
     let tree = VerkleTree::new(MemoryStorage::new()).expect("Verkle tree create");
     let consensus = GhostDag::new(1);
@@ -48,7 +45,7 @@ fn ghostdag_validate_block_success() {
 #[test]
 fn ghostdag_validate_block_future_timestamp_fails() {
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut dag = Dag::new();
+    let dag = Dag::new();
     let tree = VerkleTree::new(MemoryStorage::new()).expect("Verkle tree create");
     let consensus = GhostDag::new(1);
 
@@ -63,7 +60,7 @@ fn ghostdag_validate_block_future_timestamp_fails() {
 #[test]
 fn ghostdag_validate_block_invalid_pow_fails() {
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut dag = Dag::new();
+    let dag = Dag::new();
     let tree = VerkleTree::new(MemoryStorage::new()).expect("Verkle tree create");
     let consensus = GhostDag::new(1);
 
@@ -78,7 +75,7 @@ fn ghostdag_validate_block_invalid_pow_fails() {
 #[test]
 fn ghostdag_validate_block_verkle_output_collision_fails() {
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut dag = Dag::new();
+    let dag = Dag::new();
     let mut tree = VerkleTree::new(MemoryStorage::new()).expect("Verkle tree create");
     let consensus = GhostDag::new(1);
 

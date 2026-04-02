@@ -41,7 +41,7 @@ mod tests {
         assert_eq!(economic_constants::MINER_REWARD_PERCENT, 80);
         assert_eq!(economic_constants::FULLNODE_REWARD_PERCENT, 20);
         assert_eq!(economic_constants::BURN_ADDRESS, [0u8; 32]);
-        assert!(economic_constants::NO_BURN_ENFORCEMENT_ACTIVE);
+        const _: () = assert!(economic_constants::NO_BURN_ENFORCEMENT_ACTIVE);
         println!("Economic constants validation PASSED");
     }
 }
