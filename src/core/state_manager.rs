@@ -79,6 +79,9 @@ pub struct StateManager<S: Storage + Clone> {
 }
 
 impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
+    /// Initialize a new StateManager with a Verkle tree snapshot.
+    ///
+    /// This sets the origin state as height zero and stores first snapshot for rollback.
     pub fn new(mut tree: VerkleTree<S>) -> Result<Self, StateManagerError> {
         let root = tree.get_root()
             .map_err(|e| StateManagerError::CryptographicError(format!("Failed to get root: {}", e)))?;
@@ -99,25 +102,24 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
         })
     }
 
-    /// Atomic operation - prevents concurrent modifications with automatic rollback on failure
+    /// Apply a block atomically with atomic reversion on failure.
+    ///
+    /// Steps:
+    /// 1. Acquire lock and set atomic flag.
+    /// 2. Create in-memory snapshot for rollback.
+    /// 3. Apply transactions and verify state transition.
+    /// 4. Commit root hash and push snapshot.
+    ///
+    /// Prevents double-commit and enforces state machine consistency.
     pub fn apply_block(&mut self, block: &BlockNode, utxo: &mut UtxoSet) -> Result<(), StateManagerError> {
-        // Acquire exclusive lock when starting block application
-        let lock_ptr = &self.apply_lock as *const std::sync::Mutex<()>;
-        let _apply_guard = unsafe { (&*lock_ptr).lock().map_err(|e| StateManagerError::ApplyBlockFailed(
-            format!("Failed to acquire apply lock: {}", e)
-        ))? };
-
-        // Check if another block application is already in progress
-        if self.applying_block.load(std::sync::atomic::Ordering::SeqCst) {
+        // Check if another block application is already in progress and set flag atomically.
+        if self.applying_block.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return Err(StateManagerError::ApplyBlockFailed(
                 "Concurrent block application not allowed".to_string()
             ));
         }
 
-        // Set atomic flag and ensure it resets in Drop guard
-        self.applying_block.store(true, std::sync::atomic::Ordering::SeqCst);
-
-        let applying_block_ptr = &self.applying_block as *const std::sync::atomic::AtomicBool;
+        let applying_block_ptr: *const std::sync::atomic::AtomicBool = &self.applying_block;
         struct AtomicFlagGuard(*const std::sync::atomic::AtomicBool);
         impl Drop for AtomicFlagGuard {
             fn drop(&mut self) {

@@ -37,6 +37,10 @@ src/      → logika utama
 tests/    → tempat ngecek
 docs/     → catatan
 
+🔖 Laporan audit & status testnet
+- docs/AUDIT_FINAL_REPORT.md
+- docs/TESTNET_READY.md
+
 ---
 
 🐌 Prinsip

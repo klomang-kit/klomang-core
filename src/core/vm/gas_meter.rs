@@ -1,5 +1,10 @@
 pub type GasCost = u64;
 
+/// Gas accounting primitive for WASM and host op costs.
+///
+/// Tracks remaining gas, wasm opcode consumption, host function costs, and
+/// SNAP/self-destruct refunds. All cost adjustments are clamped to avoid
+/// overflow and enforce deterministic limits.
 #[derive(Debug, Clone)]
 pub struct GasMeter {
     pub initial: i128,
@@ -16,6 +21,7 @@ impl GasMeter {
     pub const STATE_WRITE_UPDATE_COST: GasCost = 5_000;
     pub const SELF_DESTRUCT_REFUND: GasCost = 24_000;
 
+    /// Initialize gas meter with an upper limit.
     pub fn new(gas_limit: GasCost) -> Self {
         Self {
             initial: gas_limit as i128,
@@ -61,6 +67,7 @@ impl GasMeter {
         self.refund = self.refund.saturating_add(GasMeter::SELF_DESTRUCT_REFUND);
     }
 
+    /// Consume host gas and fail if gas budget exceeded.
     pub fn consume_host(&mut self, cost: GasCost) -> Result<(), VMError> {
         self.remaining -= cost as i128;
         self.consumed_host = self.consumed_host.saturating_add(cost);

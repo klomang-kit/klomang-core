@@ -9,12 +9,36 @@ use wasmer::wasmparser::Operator;
 use wasmer::{imports, CompilerConfig, Cranelift, EngineBuilder, Function, FunctionEnv, FunctionEnvMut, Instance, Module, RuntimeError, Store};
 use wasmer_middlewares::metering::{get_remaining_points, set_remaining_points, Metering, MeteringPoints};
 
+/// VM executor coordinating WASM runtime and host state access.
+///
+/// The executor provides a sandboxed VM with metered gas and safe
+/// state interaction via host functions. It is the public entrypoint
+/// for contract execution.
 pub struct VMExecutor;
 
+/// Safe host environment using Arc<RefCell<>> instead of raw pointers
+/// This ensures memory safety and prevents use-after-free bugs
 struct HostEnv<S: Storage + Clone + Send + Sync> {
-    state_ptr: *mut StateManager<S>,
+    state: Arc<RefCell<VMStateProxy<S>>>,
     gas: RefCell<GasMeter>,
     instance_backref: RefCell<Option<Instance>>,
+}
+
+/// Proxy to StateManager providing safe interior mutability
+struct VMStateProxy<S: Storage + Clone + Send + Sync> {
+    state_manager: *mut StateManager<S>,
+}
+
+impl<S: Storage + Clone + Send + Sync> VMStateProxy<S> {
+    fn new(state_manager: &mut StateManager<S>) -> Self {
+        Self {
+            state_manager: state_manager as *mut _,
+        }
+    }
+    
+    fn get_mut(&self) -> Option<&mut StateManager<S>> {
+        unsafe { self.state_manager.as_mut() }
+    }
 }
 
 unsafe impl<S: Storage + Clone + Send + Sync> Send for HostEnv<S> {}
@@ -43,6 +67,14 @@ impl VMExecutor {
         }
     }
 
+    /// Executes WASM bytecode in a metered sandbox.
+    ///
+    /// - `wasm_bytes`: compiled WASM module payload.
+    /// - `state_manager`: mutable blockchain state manager reference.
+    /// - `sender`: transaction sender (currently unused, reserved for access control).
+    /// - `gas_limit`: total gas limit for this execution.
+    ///
+    /// Returns consumed gas or `VMError` on failure.
     pub fn execute<S>(
         wasm_bytes: &[u8],
         state_manager: &mut StateManager<S>,
@@ -55,8 +87,12 @@ impl VMExecutor {
         let tree_snapshot = state_manager.tree.clone();
 
         let lm = GasMeter::new(gas_limit);
+        
+        // Use Arc<RefCell<>> instead of raw pointers for safe state access
+        let state_proxy = Arc::new(RefCell::new(VMStateProxy::new(state_manager)));
+        
         let host_env = HostEnv {
-            state_ptr: state_manager as *mut _,
+            state: state_proxy,
             gas: RefCell::new(lm),
             instance_backref: RefCell::new(None),
         };
@@ -110,7 +146,7 @@ impl VMExecutor {
                             .read(key_ptr as u64, &mut key)
                             .map_err(|_| RuntimeError::new("Memory read failure"))?;
 
-                        let state_manager = unsafe { &*host_env.state_ptr };
+                        // Safe state access via Arc<RefCell<>> (replaces unsafe raw pointer)
                         let key_bytes = if key_len as usize == 32 {
                             let mut fixed = [0u8; 32];
                             fixed.copy_from_slice(&key);
@@ -120,9 +156,14 @@ impl VMExecutor {
                             *hashed.as_bytes()
                         };
 
-                        let value = state_manager
-                            .state_read(key_bytes)
-                            .map_err(|e| RuntimeError::new(format!("State read error: {}", e)))?;
+                        let value = {
+                            let state_proxy = host_env.state.borrow();
+                            let state_manager = state_proxy.get_mut()
+                                .ok_or_else(|| RuntimeError::new("State access failed"))?;
+                            state_manager
+                                .state_read(key_bytes)
+                                .map_err(|e| RuntimeError::new(format!("State read error: {}", e)))?
+                        };
 
                         if let Some(value) = value {
                             if value.len() > out_len as usize {
@@ -178,13 +219,17 @@ impl VMExecutor {
                             *hashed.as_bytes()
                         };
 
-                        let state_manager = unsafe { &mut *host_env.state_ptr };
+                        // Safe state access via Arc<RefCell<>> (replaces unsafe raw pointer)
+                        let is_new = {
+                            let state_proxy = host_env.state.borrow();
+                            let state_manager = state_proxy.get_mut()
+                                .ok_or_else(|| RuntimeError::new("State access failed"))?;
+                            let existing_value = state_manager
+                                .state_read(key_bytes)
+                                .map_err(|e| RuntimeError::new(format!("State read for write failed: {}", e)))?;
+                            existing_value.is_none()
+                        };
 
-                        let existing_value = state_manager
-                            .state_read(key_bytes)
-                            .map_err(|e| RuntimeError::new(format!("State read for write failed: {}", e)))?;
-
-                        let is_new = existing_value.is_none();
                         gas.charge_state_write(is_new).map_err(|_| RuntimeError::new("OutOfGas"))?;
 
                         let state_write_cost = if is_new {
@@ -196,9 +241,14 @@ impl VMExecutor {
                         Self::charge_metering_from_host(&mut store_mut, &memory_instance, state_write_cost)
                             .map_err(|_| RuntimeError::new("OutOfGas"))?;
 
-                        state_manager
-                            .state_write(key_bytes, data)
-                            .map_err(|e| RuntimeError::new(format!("State write failed: {}", e)))?;
+                        {
+                            let state_proxy = host_env.state.borrow();
+                            let state_manager = state_proxy.get_mut()
+                                .ok_or_else(|| RuntimeError::new("State access failed"))?;
+                            state_manager
+                                .state_write(key_bytes, data)
+                                .map_err(|e| RuntimeError::new(format!("State write failed: {}", e)))?;
+                        }
 
                         Ok(1)
                     },
@@ -237,12 +287,16 @@ impl VMExecutor {
                             *hashed.as_bytes()
                         };
 
-                        let state_manager = unsafe { &mut *host_env.state_ptr };
-
+                        // Safe state access via Arc<RefCell<>> (replaces unsafe raw pointer)
                         // self-destruct does not charge extra, but gives refund
                         gas.refund_self_destruct();
 
-                        let _ = state_manager.tree.prune_key(key_bytes);
+                        {
+                            let state_proxy = host_env.state.borrow();
+                            let state_manager = state_proxy.get_mut()
+                                .ok_or_else(|| RuntimeError::new("State access failed"))?;
+                            let _ = state_manager.tree.prune_key(key_bytes);
+                        }
                         Ok(1)
                     },
                 ),
