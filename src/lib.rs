@@ -53,13 +53,32 @@
 //! ```rust
 //! use klomang_core::core::state_manager::StateManager;
 //! use klomang_core::core::state::v_trie::VerkleTree;
-//! use klomang_core::{MemoryStorage, UtxoSet, BlockNode, Hash};
+//! use klomang_core::core::state::MemoryStorage;
+//! use klomang_core::core::state::utxo::UtxoSet;
+//! use klomang_core::core::dag::BlockNode;
+//! use klomang_core::core::crypto::Hash;
 //! use std::collections::HashSet;
 //!
-//! let storage = MemoryStorage::new();
-//! let tree = VerkleTree::new(storage.clone());
-//! let mut manager = StateManager::new(tree).expect("state manager");
-//! let mut utxo = UtxoSet::new();
+//! # let storage = MemoryStorage::new();
+//! # let tree = VerkleTree::new(storage.clone()).expect("create Verkle tree");
+//! # let mut manager = StateManager::new(tree).expect("state manager");
+//! # let mut utxo = UtxoSet::new();
+//! # let block = BlockNode {
+//! #     id: Hash::new(b"block1"),
+//! #     parents: HashSet::new(),
+//! #     children: HashSet::new(),
+//! #     selected_parent: None,
+//! #     blue_set: HashSet::new(),
+//! #     red_set: HashSet::new(),
+//! #     blue_score: 0,
+//! #     timestamp: 0,
+//! #     difficulty: 1,
+//! #     nonce: 0,
+//! #     transactions: Vec::new(),
+//! # };
+//! 
+//! // Atomic block application with rollback capability
+//! manager.apply_block(&block, &mut utxo).expect("apply block");
 //!
 //! let block = BlockNode {
 //!     id: Hash::new(b"block1"),
