@@ -1,7 +1,7 @@
 pub mod block;
 pub mod anticone;
 
-pub use block::BlockNode;
+pub use block::{BlockNode, BlockHeader};
 
 use crate::core::crypto::Hash;
 use std::collections::{HashMap, HashSet};
@@ -30,27 +30,27 @@ impl Dag {
     }
 
     pub fn add_block(&mut self, block: BlockNode) -> Result<(), crate::core::errors::CoreError> {
-        let id = block.id.clone();
+        let id = block.header.id.clone();
 
         if self.blocks.contains_key(&id) {
             return Err(crate::core::errors::CoreError::DuplicateBlock);
         }
 
-        if block.parents.contains(&id) {
+        if block.header.parents.contains(&id) {
             return Err(crate::core::errors::CoreError::ConsensusError("Block cannot reference itself as parent".to_string()));
         }
 
-        if block.parents.is_empty() && !self.blocks.is_empty() {
+        if block.header.parents.is_empty() && !self.blocks.is_empty() {
             return Err(crate::core::errors::CoreError::ConsensusError("Genesis block already exists".to_string()));
         }
 
-        for parent in &block.parents {
+        for parent in &block.header.parents {
             if !self.blocks.contains_key(parent) {
                 return Err(crate::core::errors::CoreError::InvalidParent);
             }
         }
 
-        let parents = block.parents.clone();
+        let parents = block.header.parents.clone();
         self.blocks.insert(id.clone(), block);
 
         // Deterministic parent update: sort for consistent order
@@ -93,7 +93,7 @@ impl Dag {
             visited.insert(current.clone());
             if let Some(block) = self.blocks.get(&current) {
                 // Deterministic traversal: sort parents for consistent order
-                let mut sorted_parents: Vec<_> = block.parents.iter().cloned().collect();
+                let mut sorted_parents: Vec<_> = block.header.parents.iter().cloned().collect();
                 sorted_parents.sort();
                 for parent in sorted_parents {
                     if parent == *a {
@@ -117,7 +117,7 @@ impl Dag {
             visited.insert(current.clone());
             if let Some(block) = self.blocks.get(&current) {
                 // Deterministic traversal: sort parents for consistent order
-                let mut sorted_parents: Vec<_> = block.parents.iter().cloned().collect();
+                let mut sorted_parents: Vec<_> = block.header.parents.iter().cloned().collect();
                 sorted_parents.sort();
                 for parent in sorted_parents {
                     ancestors.insert(parent.clone());
@@ -171,14 +171,14 @@ impl Dag {
     pub fn remove_block(&mut self, id: &Hash) {
         if let Some(block) = self.blocks.remove(id) {
             self.tips.remove(id);
-            for parent in block.parents {
+            for parent in block.header.parents {
                 if let Some(parent_block) = self.blocks.get_mut(&parent) {
                     parent_block.children.remove(id);
                 }
             }
             for child in block.children {
                 if let Some(child_block) = self.blocks.get_mut(&child) {
-                    child_block.parents.remove(id);
+                    child_block.header.parents.remove(id);
                 }
             }
         }

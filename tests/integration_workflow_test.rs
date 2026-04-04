@@ -2,7 +2,7 @@
 //! Tests the complete workflow: Transaction -> UTXO Validation -> Consensus -> Block Commitment
 
 use klomang_core::core::crypto::Hash;
-use klomang_core::core::dag::{Dag, BlockNode};
+use klomang_core::core::dag::{Dag, BlockNode, BlockHeader};
 use klomang_core::core::state::transaction::{Transaction, TxOutput};
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::state::MemoryStorage;
@@ -18,16 +18,21 @@ fn make_tx(outputs: Vec<TxOutput>) -> Transaction {
 /// Helper to create a block
 fn make_block(id: &[u8], txs: Vec<Transaction>, parents: HashSet<Hash>) -> BlockNode {
     BlockNode {
-        id: Hash::new(id),
-        parents,
+        header: BlockHeader {
+            id: Hash::new(id),
+            parents,
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: txs,
     }
 }
@@ -94,7 +99,7 @@ fn test_genesis_block() {
     let genesis = make_block(b"genesis", vec![], parents);
     
     assert_eq!(genesis.transactions.len(), 0);
-    assert_eq!(genesis.parents.len(), 0);
+    assert_eq!(genesis.header.parents.len(), 0);
 }
 
 /// Test 6: DAG structure
@@ -106,7 +111,7 @@ fn test_dag_structure() {
     let genesis = make_block(b"genesis", vec![], genesis_parents);
     
     dag.add_block(genesis.clone()).expect("Failed to add genesis");
-    assert!(dag.get_block(&genesis.id).is_some());
+    assert!(dag.get_block(&genesis.header.id).is_some());
 }
 
 /// Test 7: Multiple blocks in DAG
@@ -119,7 +124,7 @@ fn test_multiple_blocks_in_dag() {
     dag.add_block(gen.clone()).expect("Failed to add genesis");
     
     let mut block1_parents = HashSet::new();
-    block1_parents.insert(gen.id.clone());
+    block1_parents.insert(gen.header.id.clone());
     let block1 = make_block(b"block1", vec![], block1_parents);
     dag.add_block(block1.clone()).expect("Failed to add block1");
     
@@ -148,11 +153,11 @@ fn test_dag_parent_child_relationships() {
     dag.add_block(gen.clone()).expect("Failed to add genesis");
     
     let mut parents = HashSet::new();
-    parents.insert(gen.id.clone());
+    parents.insert(gen.header.id.clone());
     let block1 = make_block(b"block1", vec![], parents);
     dag.add_block(block1.clone()).expect("Failed to add block1");
     
-    let block1_retrieved = dag.get_block(&block1.id);
+    let block1_retrieved = dag.get_block(&block1.header.id);
     assert!(block1_retrieved.is_some());
 }
 
@@ -167,7 +172,7 @@ fn test_ghostdag_consensus() {
     dag.add_block(gen.clone()).expect("Failed to add genesis");
     
     let mut block1_parents = HashSet::new();
-    block1_parents.insert(gen.id.clone());
+    block1_parents.insert(gen.header.id.clone());
     let block1 = make_block(b"block1", vec![], block1_parents);
     dag.add_block(block1.clone()).expect("Failed to add block1");
     
@@ -217,11 +222,11 @@ fn test_dag_retrieval_consistency() {
     
     dag.add_block(block.clone()).expect("Failed to add block");
     
-    let retrieved = dag.get_block(&block.id);
+    let retrieved = dag.get_block(&block.header.id);
     assert!(retrieved.is_some());
     
     let retrieved_block = retrieved.unwrap();
-    assert_eq!(retrieved_block.id, block.id);
+    assert_eq!(retrieved_block.header.id, block.header.id);
 }
 
 /// Test 14: Transaction chain
@@ -255,7 +260,7 @@ fn test_complete_workflow_integration() {
     // Add blocks
     for i in 1..=3 {
         let mut parents = HashSet::new();
-        parents.insert(genesis.id.clone());
+        parents.insert(genesis.header.id.clone());
         
         let block_id = format!("block{}", i);
         let block = make_block(block_id.as_bytes(), vec![], parents);

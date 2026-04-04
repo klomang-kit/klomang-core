@@ -7,7 +7,7 @@ use klomang_core::core::crypto::{
 use klomang_core::core::state::transaction::{Transaction, TxInput, TxOutput, SigHashType};
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::consensus::{ghostdag::GhostDag, reward};
-use klomang_core::core::dag::{Dag, BlockNode};
+use klomang_core::core::dag::{Dag, BlockNode, BlockHeader};
 use klomang_core::core::config::Config;
 use klomang_core::core::errors::CoreError;
 use std::collections::HashSet;
@@ -461,16 +461,21 @@ fn test_core_error_paths_from_dag() {
 
     // Add genesis block first
     let genesis = BlockNode {
-        id: Hash::new(b"genesis"),
-        parents: HashSet::new(),
+        header: BlockHeader {
+            id: Hash::new(b"genesis"),
+            parents: HashSet::new(),
+            timestamp: 0,
+            difficulty: 1,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 1,
-        nonce: 0,
         transactions: Vec::new(),
     };
     dag.add_block(genesis.clone()).unwrap();
@@ -482,7 +487,24 @@ fn test_core_error_paths_from_dag() {
     // Invalid parent for a block requiring parent existence
     let mut bad_parent_set = HashSet::new();
     bad_parent_set.insert(Hash::new(b"missing"));
-    let bad_block = BlockNode { id: Hash::new(b"bad"), parents: bad_parent_set, children: HashSet::new(), selected_parent: None, blue_set: HashSet::new(), red_set: HashSet::new(), blue_score: 0, timestamp: 0, difficulty: 1, nonce: 0, transactions: Vec::new() };
+    let bad_block = BlockNode {
+        header: BlockHeader {
+            id: Hash::new(b"bad"),
+            parents: bad_parent_set,
+            timestamp: 0,
+            difficulty: 1,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
+        children: HashSet::new(),
+        selected_parent: None,
+        blue_set: HashSet::new(),
+        red_set: HashSet::new(),
+        blue_score: 0,
+        transactions: Vec::new(),
+    };
     let result = dag.add_block(bad_block);
     assert!(matches!(result, Err(CoreError::InvalidParent)));
 }
@@ -564,16 +586,21 @@ fn test_reward_calculate_fees_coinbase() {
 
 fn make_test_block(id: &[u8], parents: Vec<Hash>) -> BlockNode {
     BlockNode {
-        id: Hash::new(id),
-        parents: parents.into_iter().collect(),
+        header: BlockHeader {
+            id: Hash::new(id),
+            parents: parents.into_iter().collect(),
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: vec![],
     }
 }
@@ -584,15 +611,15 @@ fn test_ghostdag_select_parent_single() {
     let mut dag = Dag::new();
     
     let genesis = make_test_block(b"genesis", vec![]);
-    let b1 = make_test_block(b"b1", vec![genesis.id.clone()]);
+    let b1 = make_test_block(b"b1", vec![genesis.header.id.clone()]);
     
     dag.add_block(genesis.clone()).ok();
     dag.add_block(b1.clone()).ok();
     
-    let parents = vec![genesis.id.clone()];
+    let parents = vec![genesis.header.id.clone()];
     let selected = ghostdag.select_parent(&dag, &parents);
     
-    assert_eq!(selected, Some(genesis.id.clone()));
+    assert_eq!(selected, Some(genesis.header.id.clone()));
 }
 
 #[test]
@@ -601,8 +628,8 @@ fn test_ghostdag_select_parent_multiple() {
     let mut dag = Dag::new();
     
     let genesis = make_test_block(b"genesis", vec![]);
-    let mut b1 = make_test_block(b"b1", vec![genesis.id.clone()]);
-    let mut b2 = make_test_block(b"b2", vec![genesis.id.clone()]);
+    let mut b1 = make_test_block(b"b1", vec![genesis.header.id.clone()]);
+    let mut b2 = make_test_block(b"b2", vec![genesis.header.id.clone()]);
     
     b1.blue_score = 10;
     b2.blue_score = 20;
@@ -611,10 +638,10 @@ fn test_ghostdag_select_parent_multiple() {
     dag.add_block(b1.clone()).ok();
     dag.add_block(b2.clone()).ok();
     
-    let parents = vec![b1.id.clone(), b2.id.clone()];
+    let parents = vec![b1.header.id.clone(), b2.header.id.clone()];
     let selected = ghostdag.select_parent(&dag, &parents);
     
-    assert_eq!(selected, Some(b2.id));
+    assert_eq!(selected, Some(b2.header.id));
 }
 
 #[test]
@@ -634,7 +661,7 @@ fn test_ghostdag_anticone_genesis() {
     let genesis = make_test_block(b"genesis", vec![]);
     dag.add_block(genesis.clone()).ok();
     
-    let anticone = ghostdag.anticone(&dag, &genesis.id);
+    let anticone = ghostdag.anticone(&dag, &genesis.header.id);
     assert!(anticone.is_empty());
 }
 
@@ -646,9 +673,9 @@ fn test_ghostdag_build_blue_set_single_block() {
     let genesis = make_test_block(b"genesis", vec![]);
     dag.add_block(genesis.clone()).ok();
     
-    let (blue, red) = ghostdag.build_blue_set(&dag, &genesis.id, std::slice::from_ref(&genesis.id));
+    let (blue, red) = ghostdag.build_blue_set(&dag, &genesis.header.id, std::slice::from_ref(&genesis.header.id));
     
-    assert!(blue.contains(&genesis.id));
+    assert!(blue.contains(&genesis.header.id));
     assert!(red.is_empty());
 }
 
@@ -672,7 +699,7 @@ fn test_ghostdag_build_virtual_block_genesis() {
     
     let vblock = ghostdag.build_virtual_block(&dag);
     assert_eq!(vblock.parents.len(), 1);
-    assert!(vblock.parents.contains(&genesis.id));
+    assert!(vblock.parents.contains(&genesis.header.id));
 }
 
 #[test]
@@ -683,7 +710,7 @@ fn test_ghostdag_recompute_block_empty_parents() {
     let block = make_test_block(b"orphan", vec![]);
     dag.add_block(block.clone()).ok();
     
-    let changed = ghostdag.recompute_block(&mut dag, &block.id);
+    let changed = ghostdag.recompute_block(&mut dag, &block.header.id);
     assert!(!changed);
 }
 
@@ -693,12 +720,12 @@ fn test_ghostdag_recompute_block_with_parents() {
     let mut dag = Dag::new();
     
     let genesis = make_test_block(b"genesis", vec![]);
-    let b1 = make_test_block(b"b1", vec![genesis.id.clone()]);
+    let b1 = make_test_block(b"b1", vec![genesis.header.id.clone()]);
     
     dag.add_block(genesis).ok();
     dag.add_block(b1.clone()).ok();
     
-    let changed = ghostdag.recompute_block(&mut dag, &b1.id);
+    let changed = ghostdag.recompute_block(&mut dag, &b1.header.id);
     assert!(changed);
 }
 
@@ -711,7 +738,7 @@ fn test_ghostdag_recompute_block_missing_parent() {
     let block = make_test_block(b"orphan", vec![missing]);
     dag.add_block(block.clone()).ok();
     
-    let changed = ghostdag.recompute_block(&mut dag, &block.id);
+    let changed = ghostdag.recompute_block(&mut dag, &block.header.id);
     assert!(!changed);
 }
 
@@ -721,8 +748,8 @@ fn test_ghostdag_get_ordering_linear_chain() {
     let mut dag = Dag::new();
     
     let genesis = make_test_block(b"genesis", vec![]);
-    let b1 = make_test_block(b"b1", vec![genesis.id.clone()]);
-    let b2 = make_test_block(b"b2", vec![b1.id.clone()]);
+    let b1 = make_test_block(b"b1", vec![genesis.header.id.clone()]);
+    let b2 = make_test_block(b"b2", vec![b1.header.id.clone()]);
     
     dag.add_block(genesis).ok();
     dag.add_block(b1).ok();
@@ -857,10 +884,10 @@ fn test_ghostdag_anticone_with_multiple_branches() {
     let mut dag = Dag::new();
     
     let genesis = make_test_block(b"genesis", vec![]);
-    let b1 = make_test_block(b"b1", vec![genesis.id.clone()]);
-    let b2 = make_test_block(b"b2", vec![genesis.id.clone()]);
-    let b3 = make_test_block(b"b3", vec![b1.id.clone()]);
-    let b4 = make_test_block(b"b4", vec![b2.id.clone()]);
+    let b1 = make_test_block(b"b1", vec![genesis.header.id.clone()]);
+    let b2 = make_test_block(b"b2", vec![genesis.header.id.clone()]);
+    let b3 = make_test_block(b"b3", vec![b1.header.id.clone()]);
+    let b4 = make_test_block(b"b4", vec![b2.header.id.clone()]);
     
     dag.add_block(genesis.clone()).ok();
     dag.add_block(b1.clone()).ok();
@@ -869,7 +896,7 @@ fn test_ghostdag_anticone_with_multiple_branches() {
     dag.add_block(b4.clone()).ok();
     
     // Anticone tests
-    let anticone_b3 = ghostdag.anticone(&dag, &b3.id);
+    let anticone_b3 = ghostdag.anticone(&dag, &b3.header.id);
     assert!(!anticone_b3.is_empty());
 }
 
@@ -933,7 +960,7 @@ fn test_dag_block_children_tracking() {
     let mut dag = Dag::new();
     
     let genesis = make_test_block(b"genesis", vec![]);
-    let b1 = make_test_block(b"b1", vec![genesis.id.clone()]);
+    let b1 = make_test_block(b"b1", vec![genesis.header.id.clone()]);
     
     dag.add_block(genesis.clone()).ok();
     dag.add_block(b1.clone()).ok();

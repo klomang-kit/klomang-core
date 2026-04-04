@@ -5,37 +5,47 @@ use klomang_core::core::consensus::GhostDag;
 use klomang_core::core::dag::Dag;
 use klomang_core::core::daa::difficulty::Daa;
 use klomang_core::core::crypto::Hash;
-use klomang_core::core::dag::BlockNode;
+use klomang_core::core::dag::{BlockNode, BlockHeader};
 use std::collections::HashSet;
 
 fn make_block(id: &[u8], parents: HashSet<Hash>) -> BlockNode {
     BlockNode {
-        id: Hash::new(id),
-        parents,
+        header: BlockHeader {
+            id: Hash::new(id),
+            parents,
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: Vec::new(),
     }
 }
 
 fn make_timed_block(id: &[u8], parents: HashSet<Hash>, timestamp: u64, difficulty: u64) -> BlockNode {
     BlockNode {
-        id: Hash::new(id),
-        parents,
+        header: BlockHeader {
+            id: Hash::new(id),
+            parents,
+            timestamp,
+            difficulty,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp,
-        difficulty,
-        nonce: 0,
         transactions: Vec::new(),
     }
 }
@@ -59,7 +69,7 @@ fn test_daa_calculate_next_difficulty_fast_chain_increases() {
 
         dag.add_block(block.clone()).expect("Failed add fast block");
         parents.clear();
-        parents.insert(block.id.clone());
+        parents.insert(block.header.id.clone());
     }
 
     let daa = Daa::new(2, 5);
@@ -86,7 +96,7 @@ fn test_daa_calculate_next_difficulty_slow_chain_decreases() {
 
         dag.add_block(block.clone()).expect("Failed add slow block");
         parents.clear();
-        parents.insert(block.id.clone());
+        parents.insert(block.header.id.clone());
     }
 
     let daa = Daa::new(2, 5);
@@ -147,13 +157,13 @@ fn test_ghostdag_parent_selection() {
     
     let b2 = make_block(b"block2", {
         let mut parents = HashSet::new();
-        parents.insert(b1.id.clone());
+        parents.insert(b1.header.id.clone());
         parents
     });
     dag.add_block(b2).expect("Failed to add b2");
     
     // Test parent selection
-    let parents = vec![b1.id.clone()];
+    let parents = vec![b1.header.id.clone()];
     let selected = ghostdag.select_parent(&dag, &parents);
     
     assert!(selected.is_some());
@@ -178,7 +188,7 @@ fn test_ghostdag_multiple_chains() {
     
     let b2 = make_block(b"b2", {
         let mut parents = HashSet::new();
-        parents.insert(b1.id.clone());
+        parents.insert(b1.header.id.clone());
         parents
     });
     dag.add_block(b2.clone()).expect("Failed to add b2");
@@ -193,7 +203,7 @@ fn test_ghostdag_multiple_chains() {
     
     let b2_alt = make_block(b"b2_alt", {
         let mut parents = HashSet::new();
-        parents.insert(b1_alt.id.clone());
+        parents.insert(b1_alt.header.id.clone());
         parents
     });
     dag.add_block(b2_alt.clone()).expect("Failed to add b2_alt");
@@ -217,7 +227,7 @@ fn test_dag_add_block() {
         parents
     });
     
-    let block_id = block.id.clone();
+    let block_id = block.header.id.clone();
     
     let result = dag.add_block(block);
     assert!(result.is_ok());
@@ -282,19 +292,19 @@ fn test_ghostdag_anticone() {
     
     let b2 = make_block(b"b2", {
         let mut parents = HashSet::new();
-        parents.insert(b1.id.clone());
+        parents.insert(b1.header.id.clone());
         parents
     });
     dag.add_block(b2.clone()).expect("Failed to add b2");
     
     let b3 = make_block(b"b3", {
         let mut parents = HashSet::new();
-        parents.insert(b1.id.clone());
+        parents.insert(b1.header.id.clone());
         parents
     });
     dag.add_block(b3.clone()).expect("Failed to add b3");
     
-    let anticone = ghostdag.anticone(&dag, &b2.id);
+    let anticone = ghostdag.anticone(&dag, &b2.header.id);
     
     // Should be some blocks in anticone or empty
     assert!(anticone.is_empty() || !anticone.is_empty());
@@ -306,7 +316,7 @@ fn test_block_hash_consistency() {
     let b1 = make_block(b"block", HashSet::new());
     let b2 = make_block(b"block", HashSet::new());
     
-    assert_eq!(b1.id, b2.id);
+    assert_eq!(b1.header.id, b2.header.id);
 }
 
 /// Test 15: GHOSTDAG blue set computation
@@ -327,7 +337,7 @@ fn test_ghostdag_blue_set() {
     
     let b2 = make_block(b"b2", {
         let mut parents = HashSet::new();
-        parents.insert(b1.id.clone());
+        parents.insert(b1.header.id.clone());
         parents
     });
     dag.add_block(b2.clone()).expect("Failed to add b2");
@@ -367,7 +377,7 @@ fn test_daa_simulate_block_time_changes() {
         );
         dag.add_block(block.clone()).expect("Failed to add fast block");
         parents.clear();
-        parents.insert(block.id.clone());
+        parents.insert(block.header.id.clone());
 
         if i >= 10 {
             let next_diff = daa.calculate_next_difficulty(&dag, current_time);
@@ -397,7 +407,7 @@ fn test_daa_simulate_block_time_changes() {
         );
         dag_slow.add_block(block.clone()).expect("Failed to add slow block");
         parents_slow.clear();
-        parents_slow.insert(block.id.clone());
+        parents_slow.insert(block.header.id.clone());
 
         if i >= 10 {
             let next_diff = daa.calculate_next_difficulty(&dag_slow, current_time);
@@ -429,7 +439,7 @@ fn test_daa_simulate_block_time_changes() {
         );
         dag_boundary.add_block(block.clone()).expect("Failed to add boundary block");
         parents_boundary.clear();
-        parents_boundary.insert(block.id.clone());
+        parents_boundary.insert(block.header.id.clone());
 
         let next_diff = daa_strict.calculate_next_difficulty(&dag_boundary, *time);
 

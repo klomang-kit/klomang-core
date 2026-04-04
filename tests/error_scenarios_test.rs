@@ -10,7 +10,7 @@ use klomang_core::core::state::MemoryStorage;
 use klomang_core::core::crypto::schnorr::{verify_schnorr};
 use klomang_core::core::state::transaction::{Transaction, TxInput, TxOutput, SigHashType};
 use klomang_core::core::state::utxo::UtxoSet;
-use klomang_core::core::dag::{Dag, BlockNode};
+use klomang_core::core::dag::{Dag, BlockNode, BlockHeader};
 use klomang_core::core::crypto::Hash;
 use std::collections::HashSet;
 use std::error::Error;
@@ -26,20 +26,25 @@ fn test_core_error_variants_comprehensive() {
     let mut dag_invalid = Dag::new();
     let invalid_parent_hash = Hash::new(b"invalid_parent");
     let block_with_invalid_parent = BlockNode {
-        id: Hash::new(b"test_block"),
-        parents: {
-            let mut parents = HashSet::new();
-            parents.insert(invalid_parent_hash);
-            parents
+        header: BlockHeader {
+            id: Hash::new(b"test_block"),
+            parents: {
+                let mut parents = HashSet::new();
+                parents.insert(invalid_parent_hash);
+                parents
+            },
+            timestamp: 0,
+            difficulty: 1000,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
         },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 1000,
-        nonce: 0,
         transactions: Vec::new(),
     };
     // Adding block with invalid parent should fail
@@ -49,35 +54,45 @@ fn test_core_error_variants_comprehensive() {
     // Test DuplicateBlock - try to add same block twice
     let mut dag_dup = Dag::new();
     let genesis = BlockNode {
-        id: Hash::new(b"genesis"),
-        parents: HashSet::new(),
-        children: HashSet::new(),
-        selected_parent: None,
-        blue_set: HashSet::new(),
-        red_set: HashSet::new(),
-        blue_score: 0,
-        timestamp: 0,
-        difficulty: 1000,
-        nonce: 0,
-        transactions: Vec::new(),
-    };
-    dag_dup.add_block(genesis.clone()).expect("Genesis should succeed");
-    
-    let block = BlockNode {
-        id: Hash::new(b"duplicate_test"),
-        parents: {
-            let mut parents = HashSet::new();
-            parents.insert(Hash::new(b"genesis"));
-            parents
+        header: BlockHeader {
+            id: Hash::new(b"genesis"),
+            parents: HashSet::new(),
+            timestamp: 0,
+            difficulty: 1000,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
         },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 1000,
-        nonce: 0,
+        transactions: Vec::new(),
+    };
+    dag_dup.add_block(genesis.clone()).expect("Genesis should succeed");
+    
+    let block = BlockNode {
+        header: BlockHeader {
+            id: Hash::new(b"duplicate_test"),
+            parents: {
+                let mut parents = HashSet::new();
+                parents.insert(Hash::new(b"genesis"));
+                parents
+            },
+            timestamp: 0,
+            difficulty: 1000,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
+        children: HashSet::new(),
+        selected_parent: None,
+        blue_set: HashSet::new(),
+        red_set: HashSet::new(),
+        blue_score: 0,
         transactions: Vec::new(),
     };
     dag_dup.add_block(block.clone()).expect("First add should succeed");

@@ -24,7 +24,7 @@ impl Daa {
 
         let mut blocks: Vec<_> = all_hashes
             .into_iter()
-            .filter_map(|h| dag.get_block(&h).map(|b| (h, b.timestamp, b.difficulty)))
+            .filter_map(|h| dag.get_block(&h).map(|b| (h, b.header.timestamp, b.header.difficulty)))
             .collect();
 
         // Sort oldest->newest and keep only recent window

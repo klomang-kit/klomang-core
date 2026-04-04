@@ -220,7 +220,7 @@ impl<S: Storage + Clone + Send + Sync + 'static> StateManager<S> {
         consensus.validate_block(block, dag, &self.tree, current_time)?;
 
         // Check finality constraints for reorganization
-        if !consensus.can_reorganize(dag, &block.id)? {
+        if !consensus.can_reorganize(dag, &block.header.id)? {
             return Err(StateManagerError::ApplyBlockFailed(
                 "Block reorganization would violate finality constraints".to_string()
             ));
@@ -649,16 +649,21 @@ mod tests {
 
     fn make_block(id_bytes: &[u8], transactions: Vec<Transaction>) -> BlockNode {
         BlockNode {
-            id: Hash::new(id_bytes),
-            parents: HashSet::new(),
+            header: crate::core::dag::BlockHeader {
+                id: Hash::new(id_bytes),
+                parents: HashSet::new(),
+                timestamp: 0,
+                difficulty: 0,
+                nonce: 0,
+                verkle_root: Hash::new(b"root"),
+                verkle_proofs: None,
+                signature: None,
+            },
             children: HashSet::new(),
             selected_parent: None,
             blue_set: HashSet::new(),
             red_set: HashSet::new(),
             blue_score: 0,
-            timestamp: 0,
-            difficulty: 0,
-            nonce: 0,
             transactions,
         }
     }

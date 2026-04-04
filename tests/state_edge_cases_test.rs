@@ -2,7 +2,7 @@
 //! Tests error handling, boundary conditions, and stress scenarios
 
 use klomang_core::core::crypto::Hash;
-use klomang_core::core::dag::BlockNode;
+use klomang_core::core::dag::{BlockNode, BlockHeader};
 use klomang_core::core::state::transaction::{Transaction, TxOutput};
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::state::MemoryStorage;
@@ -13,20 +13,25 @@ use std::collections::HashSet;
 
 fn make_block(id: &[u8], txs: Vec<Transaction>) -> BlockNode {
     BlockNode {
-        id: Hash::new(id),
-        parents: {
-            let mut parents = HashSet::new();
-            parents.insert(Hash::new(b"genesis"));
-            parents
+        header: BlockHeader {
+            id: Hash::new(id),
+            parents: {
+                let mut parents = HashSet::new();
+                parents.insert(Hash::new(b"genesis"));
+                parents
+            },
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
         },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: txs,
     }
 }
@@ -381,20 +386,25 @@ fn test_block_many_transactions() {
     }).collect();
     
     let block = BlockNode {
-        id: Hash::new(b"block_many_txs"),
-        parents: {
-            let mut parents = HashSet::new();
-            parents.insert(Hash::new(b"genesis"));
-            parents
+        header: BlockHeader {
+            id: Hash::new(b"block_many_txs"),
+            parents: {
+                let mut parents = HashSet::new();
+                parents.insert(Hash::new(b"genesis"));
+                parents
+            },
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
         },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: txs,
     };
     

@@ -3,6 +3,7 @@ use k256::ecdsa::signature::{Signer, Verifier};
 use rand::rngs::OsRng;
 use crate::core::errors::CoreError;
 use crate::core::state::transaction::{Transaction, SigHashType};
+use crate::core::dag::BlockNode;
 use blake3;
 
 const TAG_TX_SIGN: &str = "KLOMANG_TX_V1";
@@ -207,4 +208,32 @@ pub fn batch_verify(
     }
     
     Ok(true)
+}
+
+/// Verify block signature menggunakan Schnorr
+pub fn verify_block_signature(block: &BlockNode) -> bool {
+    if let Some(sig_vec) = &block.header.signature {
+        if sig_vec.len() != 64 {
+            return false;
+        }
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes.copy_from_slice(sig_vec);
+        
+        // Serialize block header tanpa signature untuk verifikasi
+        let mut header_without_sig = block.header.clone();
+        header_without_sig.signature = None;
+        
+        let serialized = bincode::serialize(&header_without_sig).unwrap_or_default();
+        let msg_hash = tagged_hash(TAG_TX_SIGN, &serialized);
+        
+        // Asumsikan pubkey ada di block (misalnya dari coinbase tx)
+        // Untuk simplicity, gunakan pubkey dari tx pertama jika ada
+        if let Some(coinbase_tx) = block.transactions.first() {
+            if let Some(output) = coinbase_tx.outputs.first() {
+                let pubkey_bytes = *output.pubkey_hash.as_bytes();
+                return verify_schnorr(&pubkey_bytes, &sig_bytes, &msg_hash).unwrap_or(false);
+            }
+        }
+    }
+    false
 }

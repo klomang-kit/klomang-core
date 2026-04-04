@@ -5,6 +5,7 @@ pub trait Storage {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
     fn put(&mut self, key: Vec<u8>, value: Vec<u8>);
     fn delete(&mut self, key: &[u8]);
+    fn clear(&mut self);
 }
 
 /// Simple in-memory key/value storage implementation.
@@ -38,6 +39,10 @@ impl Storage for MemoryStorage {
 
     fn delete(&mut self, key: &[u8]) {
         self.map.remove(key);
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
     }
 }
 

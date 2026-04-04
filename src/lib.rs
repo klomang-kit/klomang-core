@@ -37,7 +37,7 @@
 //!
 //! ### Basic Usage
 //! ```rust
-//! use klomang_core::{GhostDag, UtxoSet, MemoryStorage, Dag, BlockNode, Hash};
+//! use klomang_core::{GhostDag, UtxoSet, MemoryStorage, Dag, BlockNode, BlockHeader, Hash};
 //! use std::collections::HashSet;
 //!
 //! let storage = MemoryStorage::new();
@@ -46,16 +46,21 @@
 //! let mut dag = Dag::new();
 //!
 //! let genesis = BlockNode {
-//!     id: Hash::new(b"genesis"),
-//!     parents: HashSet::new(),
+//!     header: BlockHeader {
+//!         id: Hash::new(b"genesis"),
+//!         parents: HashSet::new(),
+//!         timestamp: 0,
+//!         difficulty: 1,
+//!         nonce: 0,
+//!         verkle_root: Hash::new(b"root"),
+//!         verkle_proofs: None,
+//!         signature: None,
+//!     },
 //!     children: HashSet::new(),
 //!     selected_parent: None,
 //!     blue_set: HashSet::new(),
 //!     red_set: HashSet::new(),
 //!     blue_score: 0,
-//!     timestamp: 0,
-//!     difficulty: 1,
-//!     nonce: 0,
 //!     transactions: Vec::new(),
 //! };
 //!
@@ -71,7 +76,7 @@
 //! use klomang_core::core::state::v_trie::VerkleTree;
 //! use klomang_core::core::state::MemoryStorage;
 //! use klomang_core::core::state::utxo::UtxoSet;
-//! use klomang_core::core::dag::BlockNode;
+//! use klomang_core::core::dag::{BlockNode, BlockHeader};
 //! use klomang_core::core::crypto::Hash;
 //! use std::collections::HashSet;
 //!
@@ -80,35 +85,23 @@
 //! # let mut manager = StateManager::new(tree).expect("state manager");
 //! # let mut utxo = UtxoSet::new();
 //! # let block = BlockNode {
-//! #     id: Hash::new(b"block1"),
-//! #     parents: HashSet::new(),
+//! #     header: BlockHeader {
+//! #         id: Hash::new(b"block1"),
+//! #         parents: HashSet::new(),
+//! #         timestamp: 0,
+//! #         difficulty: 1,
+//! #         nonce: 0,
+//! #         verkle_root: Hash::new(b"root"),
+//! #         verkle_proofs: None,
+//! #         signature: None,
+//! #     },
 //! #     children: HashSet::new(),
 //! #     selected_parent: None,
 //! #     blue_set: HashSet::new(),
 //! #     red_set: HashSet::new(),
 //! #     blue_score: 0,
-//! #     timestamp: 0,
-//! #     difficulty: 1,
-//! #     nonce: 0,
 //! #     transactions: Vec::new(),
 //! # };
-//! 
-//! // Atomic block application with rollback capability
-//! manager.apply_block(&block, &mut utxo).expect("apply block");
-//!
-//! let block = BlockNode {
-//!     id: Hash::new(b"block1"),
-//!     parents: HashSet::new(),
-//!     children: HashSet::new(),
-//!     selected_parent: None,
-//!     blue_set: HashSet::new(),
-//!     red_set: HashSet::new(),
-//!     blue_score: 0,
-//!     timestamp: 0,
-//!     difficulty: 1,
-//!     nonce: 0,
-//!     transactions: Vec::new(),
-//! };
 //!
 //! // Atomic block application with rollback capability
 //! manager.apply_block(&block, &mut utxo).expect("apply block");
@@ -124,7 +117,7 @@ pub mod core;
 
 // Re-export public API for external node integration
 pub use core::crypto::Hash;
-pub use core::dag::{BlockNode, Dag};
+pub use core::dag::{BlockNode, BlockHeader, Dag};
 pub use core::consensus::ghostdag::GhostDag;
 pub use core::state::transaction::Transaction;
 pub use core::state::BlockchainState;
@@ -135,6 +128,8 @@ pub use core::config::Config;
 pub use core::consensus::emission::{COIN_UNIT, MAX_SUPPLY, block_reward};
 pub use core::daa::difficulty::Daa;
 pub use core::pow::Pow;
+pub use core::crypto::verkle::{VerkleTree, VerkleProof};
+pub use core::crypto::schnorr::verify_block_signature;
 
 #[no_mangle]
 pub extern "C" fn __rust_probestack() {}

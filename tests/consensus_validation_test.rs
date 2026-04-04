@@ -1,5 +1,5 @@
 use klomang_core::core::consensus::ghostdag::GhostDag;
-use klomang_core::core::dag::{Dag, BlockNode};
+use klomang_core::core::dag::{Dag, BlockNode, BlockHeader};
 use klomang_core::core::state::storage::MemoryStorage;
 use klomang_core::core::state::v_trie::VerkleTree;
 use klomang_core::core::state::transaction::{Transaction, TxOutput};
@@ -13,16 +13,21 @@ fn make_coinbase_transaction(value: u64, pubkey_hash: Hash) -> Transaction {
 
 fn make_test_block(transactions: Vec<Transaction>, timestamp: u64, difficulty: u64, nonce: u64) -> BlockNode {
     BlockNode {
-        id: Hash::new(b"block"),
-        parents: HashSet::new(),
+        header: BlockHeader {
+            id: Hash::new(b"block"),
+            parents: HashSet::new(),
+            timestamp,
+            difficulty,
+            nonce,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 1,
-        timestamp,
-        difficulty,
-        nonce,
         transactions,
     }
 }

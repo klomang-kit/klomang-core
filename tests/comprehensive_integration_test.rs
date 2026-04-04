@@ -10,7 +10,7 @@
 //! Target: 90% code coverage for src/core/
 
 use klomang_core::core::crypto::{Hash, schnorr::KeyPairWrapper};
-use klomang_core::core::dag::{Dag, BlockNode};
+use klomang_core::core::dag::{Dag, BlockNode, BlockHeader};
 use klomang_core::core::state::transaction::{Transaction, TxOutput, TxInput, SigHashType};
 use klomang_core::core::state::utxo::UtxoSet;
 use klomang_core::core::state::MemoryStorage;
@@ -54,16 +54,21 @@ fn make_tx(inputs: Vec<TxInput>, outputs: Vec<TxOutput>) -> Transaction {
 
 fn make_block(id: &[u8], txs: Vec<Transaction>, parents: HashSet<Hash>) -> BlockNode {
     BlockNode {
-        id: Hash::new(id),
-        parents,
+        header: BlockHeader {
+            id: Hash::new(id),
+            parents,
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: txs,
     }
 }
@@ -221,7 +226,7 @@ fn test_13_utxo_multiple_transactions() {
 #[test]
 fn test_14_genesis_block_creation() {
     let genesis = make_block(b"genesis", vec![], HashSet::new());
-    assert_eq!(genesis.parents.len(), 0);
+    assert_eq!(genesis.header.parents.len(), 0);
     assert_eq!(genesis.transactions.len(), 0);
 }
 
@@ -239,7 +244,7 @@ fn test_16_dag_block_with_parent() {
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
     let mut parents = HashSet::new();
-    parents.insert(genesis.id.clone());
+    parents.insert(genesis.header.id.clone());
     let block1 = make_block(b"block1", vec![], parents);
     dag.add_block(block1).expect("add child");
     assert_eq!(dag.get_all_hashes().len(), 2);
@@ -252,7 +257,7 @@ fn test_17_dag_linear_chain() {
     dag.add_block(prev.clone()).expect("add genesis");
     for i in 1u32..10 {
         let mut parents = HashSet::new();
-        parents.insert(prev.id.clone());
+        parents.insert(prev.header.id.clone());
         let block = make_block(&i.to_le_bytes(), vec![], parents);
         dag.add_block(block.clone()).unwrap_or_else(|_| panic!("add {}", i));
         prev = block;
@@ -266,11 +271,11 @@ fn test_18_dag_multiple_tips() {
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
     let mut p1 = HashSet::new();
-    p1.insert(genesis.id.clone());
+    p1.insert(genesis.header.id.clone());
     let block1 = make_block(b"block1", vec![], p1);
     dag.add_block(block1).expect("add b1");
     let mut p2 = HashSet::new();
-    p2.insert(genesis.id.clone());
+    p2.insert(genesis.header.id.clone());
     let block2 = make_block(b"block2", vec![], p2);
     dag.add_block(block2).expect("add b2");
     assert_eq!(dag.get_tips().len(), 2);
@@ -290,14 +295,14 @@ fn test_20_dag_blocks_with_transactions() {
     let tx = make_coinbase_tx(vec![make_output(100, b"miner")]);
     let genesis = make_block(b"genesis", vec![tx], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
-    assert_eq!(dag.get_block(&genesis.id).unwrap().transactions.len(), 1);
+    assert_eq!(dag.get_block(&genesis.header.id).unwrap().transactions.len(), 1);
 }
 
 #[test]
 fn test_21_dag_block_retrieval() {
     let mut dag = Dag::new();
     let genesis = make_block(b"genesis", vec![], HashSet::new());
-    let genesis_id = genesis.id.clone();
+    let genesis_id = genesis.header.id.clone();
     dag.add_block(genesis).expect("add genesis");
     assert!(dag.get_block(&genesis_id).is_some());
 }
@@ -318,8 +323,8 @@ fn test_23_ghostdag_select_parent_single() {
     let mut dag = Dag::new();
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
-    let selected = ghostdag.select_parent(&dag, std::slice::from_ref(&genesis.id));
-    assert_eq!(selected, Some(genesis.id.clone()));
+    let selected = ghostdag.select_parent(&dag, std::slice::from_ref(&genesis.header.id));
+    assert_eq!(selected, Some(genesis.header.id.clone()));
 }
 
 #[test]
@@ -329,14 +334,14 @@ fn test_24_ghostdag_select_parent_multiple() {
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
     let mut p1 = HashSet::new();
-    p1.insert(genesis.id.clone());
+    p1.insert(genesis.header.id.clone());
     let block1 = make_block(b"block1", vec![], p1);
     dag.add_block(block1.clone()).expect("add b1");
     let mut p2 = HashSet::new();
-    p2.insert(genesis.id.clone());
+    p2.insert(genesis.header.id.clone());
     let block2 = make_block(b"block2", vec![], p2);
     dag.add_block(block2.clone()).expect("add b2");
-    let selected = ghostdag.select_parent(&dag, &[block1.id.clone(), block2.id.clone()]);
+    let selected = ghostdag.select_parent(&dag, &[block1.header.id.clone(), block2.header.id.clone()]);
     assert!(selected.is_some());
 }
 
@@ -353,7 +358,7 @@ fn test_26_ghostdag_anticone() {
     let mut dag = Dag::new();
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
-    let anticone = ghostdag.anticone(&dag, &genesis.id);
+    let anticone = ghostdag.anticone(&dag, &genesis.header.id);
     assert!(anticone.is_empty());
 }
 
@@ -363,7 +368,7 @@ fn test_27_ghostdag_build_blue_set() {
     let mut dag = Dag::new();
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add genesis");
-    let (blue_set, _) = ghostdag.build_blue_set(&dag, &genesis.id, std::slice::from_ref(&genesis.id));
+    let (blue_set, _) = ghostdag.build_blue_set(&dag, &genesis.header.id, std::slice::from_ref(&genesis.header.id));
     assert!(!blue_set.is_empty());
 }
 
@@ -376,7 +381,7 @@ fn test_28_ghostdag_consensus_ordering() {
     for i in 1u32..=5 {
         let mut p = HashSet::new();
         if i == 1 {
-            p.insert(genesis.id.clone());
+            p.insert(genesis.header.id.clone());
         } else {
             p.insert(Hash::new(&(i-1).to_le_bytes()));
         }
@@ -608,16 +613,21 @@ fn test_51_dag_self_parent_rejected() {
     let mut parents = HashSet::new();
     parents.insert(block_id.clone());
     let block = BlockNode {
-        id: block_id,
-        parents,
+        header: BlockHeader {
+            id: block_id,
+            parents,
+            timestamp: 0,
+            difficulty: 0,
+            nonce: 0,
+            verkle_root: Hash::new(b"root"),
+            verkle_proofs: None,
+            signature: None,
+        },
         children: HashSet::new(),
         selected_parent: None,
         blue_set: HashSet::new(),
         red_set: HashSet::new(),
         blue_score: 0,
-        timestamp: 0,
-        difficulty: 0,
-        nonce: 0,
         transactions: Vec::new(),
     };
     assert!(dag.add_block(block).is_err());
@@ -720,7 +730,7 @@ fn test_60_complex_dag_branches() {
     dag.add_block(genesis.clone()).expect("add");
     for i in 0u32..3 {
         let mut p = HashSet::new();
-        p.insert(genesis.id.clone());
+        p.insert(genesis.header.id.clone());
         let b = make_block(&i.to_le_bytes(), vec![], p);
         dag.add_block(b).ok();
     }
@@ -831,7 +841,7 @@ fn test_70_dag_ancestry() {
     let genesis = make_block(b"genesis", vec![], HashSet::new());
     dag.add_block(genesis.clone()).expect("add");
     let mut p = HashSet::new();
-    p.insert(genesis.id);
+    p.insert(genesis.header.id);
     let b1 = make_block(b"b1", vec![], p);
     dag.add_block(b1).expect("add");
     assert_eq!(dag.get_all_hashes().len(), 2);

@@ -95,7 +95,7 @@ impl GhostDag {
         current_time: u64
     ) -> Result<(), CoreError> {
         // 0. DAG connectivity check (parents exist)
-        for parent in &block.parents {
+        for parent in &block.header.parents {
             if dag.get_block(parent).is_none() {
                 return Err(CoreError::ConsensusError(
                     format!("Parent block {} not found in DAG", parent)
@@ -107,36 +107,36 @@ impl GhostDag {
         let max_future_time = 2 * 60 * 60; // 2 hours tolerance into the future
         let max_past_time = 24 * 60 * 60;  // 24 hours tolerance into the past
 
-        if block.timestamp > current_time.saturating_add(max_future_time) {
+        if block.header.timestamp > current_time.saturating_add(max_future_time) {
             return Err(CoreError::ConsensusError(
-                format!("Block timestamp {} is too far in the future (current: {})", block.timestamp, current_time)
+                format!("Block timestamp {} is too far in the future (current: {})", block.header.timestamp, current_time)
             ));
         }
 
-        if block.timestamp < current_time.saturating_sub(max_past_time) {
+        if block.header.timestamp < current_time.saturating_sub(max_past_time) {
             return Err(CoreError::ConsensusError(
-                format!("Block timestamp {} is too far in the past (current: {})", block.timestamp, current_time)
+                format!("Block timestamp {} is too far in the past (current: {})", block.header.timestamp, current_time)
             ));
         }
 
         // 2. Validate difficulty
-        if block.difficulty == 0 {
+        if block.header.difficulty == 0 {
             return Err(CoreError::ConsensusError("Block difficulty cannot be zero".to_string()));
         }
 
         // 3. Validate PoW
         let tx_root = self.compute_transaction_merkle_root(&block.transactions);
         let block_hash = hash::calculate_hash(
-            block.timestamp,
-            block.difficulty,
-            &block.parents.iter().cloned().collect::<Vec<_>>(),
+            block.header.timestamp,
+            block.header.difficulty,
+            &block.header.parents.iter().cloned().collect::<Vec<_>>(),
             block.blue_score,
-            block.nonce,
+            block.header.nonce,
             &tx_root,
         );
-        if !hash::is_valid_pow(&block_hash, block.difficulty) {
+        if !hash::is_valid_pow(&block_hash, block.header.difficulty) {
             return Err(CoreError::ConsensusError(
-                format!("Invalid PoW: hash {} does not meet difficulty {}", block_hash, block.difficulty)
+                format!("Invalid PoW: hash {} does not meet difficulty {}", block_hash, block.header.difficulty)
             ));
         }
 
@@ -303,6 +303,34 @@ impl GhostDag {
         dag.get_anticone(block)
     }
 
+    /// Calculate blue score for a block
+    pub fn calculate_blue_score(&self, dag: &Dag, block_hash: &Hash) -> u64 {
+        let block = match dag.get_block(block_hash) {
+            Some(b) => b,
+            None => return 0,
+        };
+
+        if block.header.parents.is_empty() {
+            return 0; // genesis
+        }
+
+        let selected_parent = match &block.selected_parent {
+            Some(sp) => sp,
+            None => return 0,
+        };
+
+        let parent_score = dag.get_block(selected_parent)
+            .map(|b| b.blue_score)
+            .unwrap_or(0);
+
+        parent_score + (block.blue_set.len() as u64)
+    }
+
+    /// Get anticone for a block
+    pub fn get_anticone(&self, dag: &Dag, block: &Hash) -> Vec<Hash> {
+        self.anticone(dag, block)
+    }
+
     pub fn build_blue_set(
         &self,
         dag: &Dag,
@@ -340,11 +368,11 @@ impl GhostDag {
             None => return false,
         };
 
-        if block.parents.is_empty() {
+        if block.header.parents.is_empty() {
             return false;
         }
 
-        for parent in &block.parents {
+        for parent in &block.header.parents {
             if dag.get_block(parent).is_none() {
                 return false;
             }
@@ -352,7 +380,7 @@ impl GhostDag {
 
         // Convert HashSet to Vec for deterministic processing
         let parents_vec: Vec<Hash> = {
-            let mut v: Vec<_> = block.parents.iter().cloned().collect();
+            let mut v: Vec<_> = block.header.parents.iter().cloned().collect();
             v.sort();
             v
         };
@@ -474,7 +502,7 @@ impl GhostDag {
                 .get_block(hash)
                 .map(|block| {
                     block
-                        .parents
+                        .header.parents
                         .iter()
                         .filter(|p| node_set.contains(p))
                         .count()
@@ -521,7 +549,7 @@ impl GhostDag {
             None => return,
         };
 
-        if block.parents.is_empty() {
+        if block.header.parents.is_empty() {
             if let Some(stored) = dag.get_block_mut(block_hash) {
                 stored.selected_parent = None;
                 stored.blue_set = HashSet::new();
@@ -534,7 +562,7 @@ impl GhostDag {
 
         // Affected area should include all descendants of all parents, and the block itself
         let mut affected_set = HashSet::new();
-        for parent in &block.parents {
+        for parent in &block.header.parents {
             affected_set.insert(parent.clone());
             for child in dag.get_descendants(parent) {
                 affected_set.insert(child);

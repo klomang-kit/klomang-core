@@ -9,6 +9,7 @@
 use crate::core::crypto::verkle::polynomial_commitment::{Commitment, PolynomialCommitment, OpeningProof};
 use crate::core::errors::CoreError;
 use crate::core::state::storage::Storage;
+use crate::core::state::utxo::UtxoSet;
 use ark_ec::Group;
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use ark_ff::{Field, PrimeField};
@@ -665,6 +666,74 @@ impl<S: Storage> VerkleTree<S> {
         child_path.push(child_index);
         let child_root = self.compute_node_root_hash(&child_path, path.len() + 1);
         <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
+    }
+
+    /// Calculate Verkle root dari UtxoSet menggunakan path derivation: address + ":" + vout + ":" + "VALUE"
+    pub fn calculate_verkle_root(&mut self, utxo_set: &UtxoSet) -> crate::core::crypto::Hash {
+        // Clear tree sebelum populate dengan UTXO
+        self.storage.clear();
+        self.commitment_cache.clear();
+        self.root_cache = None;
+        self.pruned_keys.clear();
+        self.pruned_commitments.clear();
+
+        // Insert setiap UTXO ke tree
+        for (outpoint, tx_output) in &utxo_set.utxos {
+            // Path derivation: address + ":" + vout + ":" + "VALUE"
+            let address_str = hex::encode(tx_output.pubkey_hash.as_bytes());
+            let vout_str = outpoint.1.to_string();
+            let path_str = format!("{}:{}:VALUE", address_str, vout_str);
+            
+            // Hash path dengan blake3 untuk key 32-byte
+            let path_hash = blake3::hash(path_str.as_bytes());
+            let mut key = [0u8; KEY_SIZE];
+            key.copy_from_slice(&path_hash.as_bytes()[..KEY_SIZE]);
+            
+            // Value adalah value dari UTXO
+            let value = tx_output.value.to_le_bytes().to_vec();
+            
+            self.insert(key, value);
+        }
+
+        // Return root hash
+        crate::core::crypto::Hash::from_bytes(&self.get_root())
+    }
+
+    /// Verify Verkle proof untuk key dan value tertentu
+    pub fn verify_verkle_proof(&self, root: crate::core::crypto::Hash, proof: &VerkleProof, key: crate::core::crypto::Hash, value: crate::core::crypto::Hash) -> bool {
+        // Check root match
+        if proof.root != *root.as_bytes() {
+            return false;
+        }
+        
+        // Verify proof structure
+        if !self.verify_proof(proof) {
+            return false;
+        }
+        
+        // Check key match
+        if proof.path != key.as_bytes().to_vec() {
+            return false;
+        }
+        
+        // Check value match untuk membership proof
+        if let ProofType::Membership = proof.proof_type {
+            if let Some(leaf_value) = &proof.leaf_value {
+                let expected_value = crate::core::crypto::Hash::new(leaf_value);
+                if expected_value != value {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            // Non-membership proof tidak boleh ada value
+            if proof.leaf_value.is_some() {
+                return false;
+            }
+        }
+        
+        true
     }
 }
 
