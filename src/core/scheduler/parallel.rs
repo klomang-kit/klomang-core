@@ -104,7 +104,7 @@ impl ParallelScheduler {
             gas_fees_len: state_manager.block_gas_fees.len(),
             pending_updates_len: state_manager.pending_updates.len(),
             utxo_snapshot: utxo.clone(),
-            tree_root_hash: state_manager.get_root_hash().ok(),
+            tree_root_hash: state_manager.tree.get_root().ok(),
         };
 
         for (group_idx, group) in groups.into_iter().enumerate() {
@@ -115,14 +115,21 @@ impl ParallelScheduler {
                 gas_fees_len: state_manager.block_gas_fees.len(),
                 pending_updates_len: state_manager.pending_updates.len(),
                 utxo_snapshot: utxo.clone(),
-                tree_root_hash: state_manager.get_root_hash().ok(),
+                tree_root_hash: state_manager.tree.get_root().ok(),
             };
 
             // Execute transactions in the group sequentially to maintain state consistency
             // StateManager is not thread-safe, so sequential execution is required
             let mut execution_failed = false;
+            let mut dummy_undo = crate::core::state_manager::BlockUndo {
+                spent_utxos: Vec::new(),
+                created_utxos: Vec::new(),
+                verkle_updates: Vec::new(),
+                total_supply_delta: 0,
+                gas_fees_added: Vec::new(),
+            };
             for (tx_idx, scheduled) in group.into_iter().enumerate() {
-                if let Err(e) = state_manager.apply_transaction(&scheduled.tx, utxo) {
+                if let Err(e) = state_manager.apply_transaction(&scheduled.tx, utxo, &mut dummy_undo) {
                     eprintln!("Transaction {} in group {} failed: {:?}", tx_idx, group_idx, e);
                     execution_failed = true;
                     break;
@@ -139,7 +146,7 @@ impl ParallelScheduler {
             }
 
             // Verify state changed (prevent invalid batch bypass)
-            let post_group_root = state_manager.get_root_hash()
+            let post_group_root = state_manager.tree.get_root()
                 .map_err(|e| StateManagerError::CryptographicError(
                     format!("Failed to get root after group {}: {}", group_idx, e)
                 ))?;

@@ -18,6 +18,7 @@ pub enum CoreError {
     StorageError(String),
     PrunedData(String),
     InvalidState(String),
+    ValidationError(String),
 }
 
 impl fmt::Display for CoreError {
@@ -38,6 +39,7 @@ impl fmt::Display for CoreError {
             CoreError::StorageError(msg) => write!(f, "Storage error: {}", msg),
             CoreError::PrunedData(msg) => write!(f, "Pruned data access error: {}", msg),
             CoreError::InvalidState(msg) => write!(f, "Invalid state: {}", msg),
+            CoreError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
         }
     }
 }

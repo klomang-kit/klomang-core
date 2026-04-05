@@ -156,6 +156,45 @@ impl Dag {
         descendants
     }
 
+    /// Find the lowest common ancestor between two blocks
+    pub fn find_common_ancestor(&self, a: &Hash, b: &Hash) -> Option<Hash> {
+        if a == b {
+            return Some(a.clone());
+        }
+
+        let ancestors_a = self.get_ancestors(a);
+        let ancestors_b = self.get_ancestors(b);
+
+        // Include the blocks themselves in the ancestor sets
+        let mut set_a: HashSet<_> = ancestors_a.into_iter().collect();
+        set_a.insert(a.clone());
+
+        let mut set_b: HashSet<_> = ancestors_b.into_iter().collect();
+        set_b.insert(b.clone());
+
+        // Find intersection
+        let intersection: HashSet<_> = set_a.intersection(&set_b).cloned().collect();
+
+        if intersection.is_empty() {
+            return None;
+        }
+
+        // Find the one with maximum blue score (as proxy for "lowest" in the DAG)
+        let mut max_blue_score = 0;
+        let mut lca = None;
+
+        for hash in intersection {
+            if let Some(block) = self.blocks.get(&hash) {
+                if block.blue_score > max_blue_score {
+                    max_blue_score = block.blue_score;
+                    lca = Some(hash);
+                }
+            }
+        }
+
+        lca
+    }
+
     pub fn get_anticone(&self, id: &Hash) -> Vec<Hash> {
         anticone::get_anticone(self, id)
     }

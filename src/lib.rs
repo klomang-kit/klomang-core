@@ -130,6 +130,7 @@ pub use core::daa::difficulty::Daa;
 pub use core::pow::Pow;
 pub use core::crypto::verkle::{VerkleTree, VerkleProof};
 pub use core::crypto::schnorr::verify_block_signature;
+pub use core::mempool::{Mempool, MempoolError, SignedTransaction, TransactionID};
 
 #[no_mangle]
 pub extern "C" fn __rust_probestack() {}

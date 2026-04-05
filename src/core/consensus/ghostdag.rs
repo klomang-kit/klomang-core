@@ -646,6 +646,69 @@ impl GhostDag {
         // If depth to common ancestor exceeds finality, cannot reorganize
         Ok(depth <= FINALITY_DEPTH)
     }
+
+    /// Check if reorganization is needed based on blue score comparison
+    /// Returns the tip of the chain with higher blue score if reorg is needed
+    pub fn should_reorganize(&self, dag: &Dag) -> Option<Hash> {
+        let virtual_block = self.build_virtual_block(dag);
+
+        // Get all tips
+        let tips = dag.get_tips();
+
+        // Find the tip with the highest blue score
+        let best_tip = tips.into_iter()
+            .filter_map(|tip| {
+                dag.get_block(&tip).map(|block| (tip, block.blue_score))
+            })
+            .max_by(|(_, score1), (_, score2)| score1.cmp(score2))
+            .map(|(tip, _)| tip)?;
+
+        // If the best tip is not the selected parent of virtual block, we need to reorganize
+        if Some(&best_tip) != virtual_block.selected_parent.as_ref() {
+            Some(best_tip)
+        } else {
+            None
+        }
+    }
+
+    /// Perform reorganization to the specified tip
+    /// This assumes the reorganization is valid (checked by should_reorganize/can_reorganize)
+    pub fn reorganize_to_tip(&self, dag: &mut Dag, new_tip: &Hash) -> Result<Vec<Hash>, CoreError> {
+        let virtual_block = self.build_virtual_block(dag);
+
+        // Find the common ancestor
+        let common_ancestor = dag.find_common_ancestor(
+            virtual_block.selected_parent.as_ref().unwrap_or(&Hash::new(&[])),
+            new_tip
+        ).ok_or_else(|| CoreError::ConsensusError("No common ancestor found for reorganization".to_string()))?;
+
+        // Get the path from common ancestor to current selected parent (blocks to disconnect)
+        let mut to_disconnect = Vec::new();
+        let mut current = virtual_block.selected_parent.clone();
+        while let Some(hash) = current {
+            if hash == common_ancestor {
+                break;
+            }
+            to_disconnect.push(hash.clone());
+            current = dag.get_block(&hash).and_then(|b| b.selected_parent.clone());
+        }
+
+        // Get the path from common ancestor to new tip (blocks to connect)
+        let mut to_connect = Vec::new();
+        current = Some(new_tip.clone());
+        while let Some(hash) = current {
+            if hash == common_ancestor {
+                break;
+            }
+            to_connect.push(hash.clone());
+            current = dag.get_block(&hash).and_then(|b| b.selected_parent.clone());
+        }
+        to_connect.reverse(); // Reverse so we connect from ancestor to tip
+
+        // Return the blocks that need to be disconnected and connected
+        // The caller (state manager) will handle the actual disconnect/connect operations
+        Ok(to_disconnect.into_iter().chain(to_connect).collect())
+    }
 }
 
 impl Default for GhostDag {
