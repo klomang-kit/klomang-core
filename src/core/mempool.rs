@@ -18,7 +18,7 @@ const DEFAULT_MAX_MEMPOOL_BYTES: usize = 100 * 1024 * 1024;
 const DEFAULT_MAX_MEMPOOL_TXS: usize = 50_000;
 const DEFAULT_MIN_FEE_PER_BYTE: u128 = 1;
 const DEFAULT_TX_TTL_SECONDS: u64 = 60 * 60 * 24; // 24 hours
-const MAX_TX_SIZE_BYTES: usize = 1 * 1024 * 1024; // 1MB per transaction
+const MAX_TX_SIZE_BYTES: usize = 1024 * 1024; // 1MB per transaction
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MempoolError {
@@ -398,6 +398,10 @@ impl Mempool {
         self.inner.read().unwrap().transactions.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn total_bytes(&self) -> usize {
         self.inner.read().unwrap().total_bytes
     }
@@ -442,6 +446,12 @@ impl Mempool {
                 inner.total_bytes = inner.total_bytes.saturating_sub(pending.size_bytes);
             }
         }
+    }
+}
+
+impl Default for Mempool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

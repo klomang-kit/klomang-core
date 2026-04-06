@@ -36,7 +36,7 @@ impl<S: Storage + Clone + Send + Sync> VMStateProxy<S> {
         }
     }
     
-    fn get_mut(&self) -> Option<&mut StateManager<S>> {
+    fn get_mut(&mut self) -> Option<&mut StateManager<S>> {
         unsafe { self.state_manager.as_mut() }
     }
 }
@@ -157,7 +157,7 @@ impl VMExecutor {
                         };
 
                         let value = {
-                            let state_proxy = host_env.state.borrow();
+                            let mut state_proxy = host_env.state.borrow_mut();
                             let state_manager = state_proxy.get_mut()
                                 .ok_or_else(|| RuntimeError::new("State access failed"))?;
                             state_manager
@@ -221,7 +221,7 @@ impl VMExecutor {
 
                         // Safe state access via Arc<RefCell<>> (replaces unsafe raw pointer)
                         let is_new = {
-                            let state_proxy = host_env.state.borrow();
+                            let mut state_proxy = host_env.state.borrow_mut();
                             let state_manager = state_proxy.get_mut()
                                 .ok_or_else(|| RuntimeError::new("State access failed"))?;
                             let existing_value = state_manager
@@ -242,7 +242,7 @@ impl VMExecutor {
                             .map_err(|_| RuntimeError::new("OutOfGas"))?;
 
                         {
-                            let state_proxy = host_env.state.borrow();
+                            let mut state_proxy = host_env.state.borrow_mut();
                             let state_manager = state_proxy.get_mut()
                                 .ok_or_else(|| RuntimeError::new("State access failed"))?;
                             state_manager
@@ -292,7 +292,7 @@ impl VMExecutor {
                         gas.refund_self_destruct();
 
                         {
-                            let state_proxy = host_env.state.borrow();
+                            let mut state_proxy = host_env.state.borrow_mut();
                             let state_manager = state_proxy.get_mut()
                                 .ok_or_else(|| RuntimeError::new("State access failed"))?;
                             let _ = state_manager.tree.prune_key(key_bytes);

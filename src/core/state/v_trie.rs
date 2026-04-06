@@ -1,4 +1,4 @@
-use crate::core::crypto::verkle::polynomial_commitment::Commitment;
+use crate::core::crypto::verkle::polynomial_commitment::{Commitment, OpeningProof};
 use crate::core::crypto::verkle::PolynomialCommitment;
 use crate::core::errors::CoreError;
 use crate::core::state::storage::Storage;
@@ -48,7 +48,14 @@ pub struct VerkleProof {
     pub siblings: Vec<[u8; 32]>,
     pub leaf_value: Option<Vec<u8>>,
     pub root: [u8; 32],
+    pub opening_proofs: Vec<OpeningProof>,
     pub gas_fee_distribution: Option<GasFeeWitness>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VerkleMultiProof {
+    pub root: [u8; 32],
+    pub entry_proofs: Vec<VerkleProof>,
 }
 
 /// In-memory storage-backed 256-ary Verkle tree with commitment caching.
@@ -252,13 +259,25 @@ impl<S: Storage> VerkleTree<S> {
         self.generate_proof_with_witness(key, None)
     }
 
+    pub fn generate_multi_proof(&mut self, keys: Vec<[u8; KEY_SIZE]>) -> Result<VerkleMultiProof, CoreError> {
+        let root = self.get_root()?;
+        let mut entry_proofs = Vec::with_capacity(keys.len());
+        for key in keys {
+            let proof = self.generate_proof_with_witness(key, None)?;
+            entry_proofs.push(proof);
+        }
+        Ok(VerkleMultiProof { root, entry_proofs })
+    }
+
     pub fn generate_proof_with_witness(&mut self, key: [u8; KEY_SIZE], gas_witness: Option<GasFeeWitness>) -> Result<VerkleProof, CoreError> {
         let mut siblings = Vec::with_capacity(KEY_SIZE * VERKLE_RADIX);
+        let mut opening_proofs = Vec::new();
         let mut path = Vec::new();
         let mut path_exists = true;
 
         for (depth, &byte) in key.iter().enumerate().take(KEY_SIZE) {
             let empty_child_root = self.empty_subtree_root_hash(depth + 1);
+
             for child_index in 0..VERKLE_RADIX {
                 let child_root = if path_exists && self.node_exists(&path) {
                     let mut child_path = path.clone();
@@ -272,6 +291,15 @@ impl<S: Storage> VerkleTree<S> {
                     empty_child_root
                 };
                 siblings.push(child_root);
+            }
+
+            if path_exists && self.node_exists(&path) {
+                let point = <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&byte.to_le_bytes()[..]);
+                let value_hash = self.hash_node_value_at_index(&path, byte);
+                let polynomial = self.reconstruct_node_polynomial(&path, depth);
+                if let Ok(proof) = self.pc.open(&polynomial, point, value_hash) {
+                    opening_proofs.push(proof);
+                }
             }
 
             if path_exists {
@@ -300,6 +328,7 @@ impl<S: Storage> VerkleTree<S> {
             siblings,
             leaf_value,
             root: self.get_root()?,
+            opening_proofs,
             gas_fee_distribution: gas_witness,
         })
     }
@@ -324,6 +353,11 @@ impl<S: Storage> VerkleTree<S> {
                     return Ok(false);
                 }
             }
+        }
+
+        for opening_proof in &proof.opening_proofs {
+            self.pc.verify(&opening_proof.quotient_commitment, opening_proof)
+                .map_err(|e| CoreError::PolynomialCommitmentError(format!("IPA proof verification failed: {}", e)))?;
         }
 
         let mut current_scalar = match (&proof.proof_type, &proof.leaf_value) {
@@ -380,6 +414,18 @@ impl<S: Storage> VerkleTree<S> {
             }
         }
 
+        Ok(true)
+    }
+
+    pub fn verify_multi_proof(&self, proof: &VerkleMultiProof) -> Result<bool, CoreError> {
+        for entry_proof in &proof.entry_proofs {
+            if entry_proof.root != proof.root {
+                return Ok(false);
+            }
+            if !self.verify_proof(entry_proof)? {
+                return Ok(false);
+            }
+        }
         Ok(true)
     }
 
@@ -477,7 +523,8 @@ impl<S: Storage> VerkleTree<S> {
                 let mut child_path = path.to_vec();
                 child_path.push(child_index as u8);
                 let child_scalar = if self.node_exists(&child_path) {
-                    let child_root = self.compute_node_root_hash(&child_path, depth + 1)?;
+                    let child_root = self.compute_node_root_hash(&child_path, depth + 1)
+                        .unwrap_or_else(|_| self.empty_subtree_root_hash(depth + 1));
                     <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
                 } else {
                     empty_scalar
@@ -492,6 +539,52 @@ impl<S: Storage> VerkleTree<S> {
 
         self.commitment_cache.insert(key, CachedNode { commitment: Some(commitment.clone()) });
         Ok(commitment)
+    }
+
+    fn reconstruct_node_polynomial(
+        &mut self,
+        path: &[u8],
+        depth: usize,
+    ) -> DensePolynomial<<EdwardsProjective as Group>::ScalarField> {
+        if depth == KEY_SIZE {
+            let leaf_scalar = self
+                .get_node_value(path)
+                .as_deref()
+                .map(Self::value_to_scalar)
+                .unwrap_or(<EdwardsProjective as Group>::ScalarField::ZERO);
+            return DensePolynomial::from_coefficients_vec(vec![leaf_scalar]);
+        }
+
+        let empty_scalar = self.empty_subtree_scalar(depth + 1);
+        let mut coeffs = Vec::with_capacity(VERKLE_RADIX);
+
+        for child_index in 0..VERKLE_RADIX {
+            let mut child_path = path.to_vec();
+            child_path.push(child_index as u8);
+            let child_scalar = if self.node_exists(&child_path) {
+                let child_root = self
+                    .compute_node_root_hash(&child_path, depth + 1)
+                    .unwrap_or_else(|_| self.empty_subtree_root_hash(depth + 1));
+                <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
+            } else {
+                empty_scalar
+            };
+            coeffs.push(child_scalar);
+        }
+
+        DensePolynomial::from_coefficients_vec(coeffs)
+    }
+
+    fn hash_node_value_at_index(
+        &mut self,
+        path: &[u8],
+        child_index: u8,
+    ) -> <EdwardsProjective as Group>::ScalarField {
+        let mut child_path = path.to_vec();
+        child_path.push(child_index);
+        let child_root = self.compute_node_root_hash(&child_path, path.len() + 1)
+            .unwrap_or_else(|_| self.empty_subtree_root_hash(path.len() + 1));
+        <EdwardsProjective as Group>::ScalarField::from_le_bytes_mod_order(&child_root)
     }
 
     fn compute_empty_subtree_constants(

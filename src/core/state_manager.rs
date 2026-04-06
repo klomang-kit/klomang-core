@@ -54,8 +54,250 @@ pub enum StateManagerError {
     ApplyBlockFailed(String),
     RestoreFailed(String),
     CryptographicError(String),
+    SerializationError(String),
     SupplyCapExceeded(String),
     BurnAddressViolation(String),
+}
+
+/// Execution witness containing all key/value state reads required for a block or contract execution.
+#[derive(Debug, Clone)]
+pub struct ExecutionWitnessEntry {
+    pub key: [u8; 32],
+    pub value: Option<Vec<u8>>,
+    pub proof: crate::core::state::v_trie::VerkleProof,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionWitness {
+    pub root: [u8; 32],
+    pub entries: Vec<ExecutionWitnessEntry>,
+}
+
+impl ExecutionWitness {
+    pub fn is_valid(&self) -> bool {
+        self.entries.iter().all(|entry| {
+            entry.proof.root == self.root && entry.proof.path == entry.key.to_vec()
+        })
+    }
+
+    pub fn serialize_compact(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&self.root);
+        buffer.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
+
+        for entry in &self.entries {
+            buffer.extend_from_slice(&entry.key);
+            buffer.push(entry.proof.proof_type.clone() as u8);
+            buffer.push(if entry.value.is_some() { 1 } else { 0 });
+            if let Some(value) = &entry.value {
+                buffer.extend_from_slice(&(value.len() as u32).to_be_bytes());
+                buffer.extend_from_slice(value);
+            }
+            buffer.extend_from_slice(&(entry.proof.path.len() as u32).to_be_bytes());
+            buffer.extend_from_slice(&entry.proof.path);
+            buffer.extend_from_slice(&(entry.proof.siblings.len() as u32).to_be_bytes());
+            for sibling in &entry.proof.siblings {
+                buffer.extend_from_slice(sibling);
+            }
+            buffer.extend_from_slice(&entry.proof.root);
+            buffer.push(if entry.proof.leaf_value.is_some() { 1 } else { 0 });
+            if let Some(leaf_value) = &entry.proof.leaf_value {
+                buffer.extend_from_slice(&(leaf_value.len() as u32).to_be_bytes());
+                buffer.extend_from_slice(leaf_value);
+            }
+            buffer.push(if entry.proof.gas_fee_distribution.is_some() { 1 } else { 0 });
+            if let Some(witness) = &entry.proof.gas_fee_distribution {
+                buffer.extend_from_slice(&witness.total_gas_fee.to_be_bytes());
+                buffer.extend_from_slice(&witness.miner_share.to_be_bytes());
+                buffer.extend_from_slice(&witness.fullnode_share.to_be_bytes());
+            }
+        }
+
+        buffer
+    }
+
+    pub fn deserialize_compact(bytes: &[u8]) -> Result<Self, String> {
+        let mut cursor = 0;
+
+        if bytes.len() < 36 {
+            return Err("Invalid witness serialization".to_string());
+        }
+
+        let mut root = [0u8; 32];
+        root.copy_from_slice(&bytes[cursor..cursor + 32]);
+        cursor += 32;
+
+        let entry_count = u32::from_be_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "Invalid entry count" )?,
+        ) as usize;
+        cursor += 4;
+
+        let mut entries = Vec::with_capacity(entry_count);
+
+        for _ in 0..entry_count {
+            if cursor + 32 + 1 + 1 > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&bytes[cursor..cursor + 32]);
+            cursor += 32;
+
+            let proof_type = match bytes[cursor] {
+                0 => crate::core::state::v_trie::ProofType::NonMembership,
+                1 => crate::core::state::v_trie::ProofType::Membership,
+                _ => return Err("Invalid proof type".to_string()),
+            };
+            cursor += 1;
+
+            let has_value = bytes[cursor] == 1;
+            cursor += 1;
+            let value = if has_value {
+                if cursor + 4 > bytes.len() {
+                    return Err("Invalid execution witness data".to_string());
+                }
+                let len = u32::from_be_bytes(
+                    bytes[cursor..cursor + 4]
+                        .try_into()
+                        .map_err(|_| "Invalid value length" )?,
+                ) as usize;
+                cursor += 4;
+                if cursor + len > bytes.len() {
+                    return Err("Invalid execution witness data".to_string());
+                }
+                let value_bytes = bytes[cursor..cursor + len].to_vec();
+                cursor += len;
+                Some(value_bytes)
+            } else {
+                None
+            };
+
+            if cursor + 4 > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+            let path_len = u32::from_be_bytes(
+                bytes[cursor..cursor + 4]
+                    .try_into()
+                    .map_err(|_| "Invalid path length" )?,
+            ) as usize;
+            cursor += 4;
+            if cursor + path_len > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+            let path = bytes[cursor..cursor + path_len].to_vec();
+            cursor += path_len;
+
+            if cursor + 4 > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+            let sibling_count = u32::from_be_bytes(
+                bytes[cursor..cursor + 4]
+                    .try_into()
+                    .map_err(|_| "Invalid sibling count" )?,
+            ) as usize;
+            cursor += 4;
+            let mut siblings = Vec::with_capacity(sibling_count);
+            for _ in 0..sibling_count {
+                if cursor + 32 > bytes.len() {
+                    return Err("Invalid execution witness data".to_string());
+                }
+                let mut sibling = [0u8; 32];
+                sibling.copy_from_slice(&bytes[cursor..cursor + 32]);
+                cursor += 32;
+                siblings.push(sibling);
+            }
+
+            if cursor + 32 > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+            let mut proof_root = [0u8; 32];
+            proof_root.copy_from_slice(&bytes[cursor..cursor + 32]);
+            cursor += 32;
+
+            if cursor + 1 > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+            let leaf_present = bytes[cursor] == 1;
+            cursor += 1;
+            let leaf_value = if leaf_present {
+                if cursor + 4 > bytes.len() {
+                    return Err("Invalid execution witness data".to_string());
+                }
+                let len = u32::from_be_bytes(
+                    bytes[cursor..cursor + 4]
+                        .try_into()
+                        .map_err(|_| "Invalid leaf value length" )?,
+                ) as usize;
+                cursor += 4;
+                if cursor + len > bytes.len() {
+                    return Err("Invalid execution witness data".to_string());
+                }
+                let leaf_bytes = bytes[cursor..cursor + len].to_vec();
+                cursor += len;
+                Some(leaf_bytes)
+            } else {
+                None
+            };
+
+            if cursor + 1 > bytes.len() {
+                return Err("Invalid execution witness data".to_string());
+            }
+            let has_witness = bytes[cursor] == 1;
+            cursor += 1;
+            let gas_fee_distribution = if has_witness {
+                if cursor + 48 > bytes.len() {
+                    return Err("Invalid execution witness data".to_string());
+                }
+                let total_gas_fee = u128::from_be_bytes(
+                    bytes[cursor..cursor + 16]
+                        .try_into()
+                        .map_err(|_| "Invalid gas fee bytes" )?,
+                );
+                cursor += 16;
+                let miner_share = u128::from_be_bytes(
+                    bytes[cursor..cursor + 16]
+                        .try_into()
+                        .map_err(|_| "Invalid gas fee bytes" )?,
+                );
+                cursor += 16;
+                let fullnode_share = u128::from_be_bytes(
+                    bytes[cursor..cursor + 16]
+                        .try_into()
+                        .map_err(|_| "Invalid gas fee bytes" )?,
+                );
+                cursor += 16;
+                Some(GasFeeWitness {
+                    total_gas_fee,
+                    miner_share,
+                    fullnode_share,
+                })
+            } else {
+                None
+            };
+
+            entries.push(ExecutionWitnessEntry {
+                key,
+                value,
+                proof: crate::core::state::v_trie::VerkleProof {
+                    proof_type,
+                    path,
+                    siblings,
+                    leaf_value: leaf_value.clone(),
+                    root: proof_root,
+                    opening_proofs: Vec::new(),
+                    gas_fee_distribution: gas_fee_distribution.map(|w| crate::core::state::v_trie::GasFeeWitness {
+                        total_gas_fee: w.total_gas_fee,
+                        miner_share: w.miner_share,
+                        fullnode_share: w.fullnode_share,
+                    }),
+                },
+            });
+        }
+
+        Ok(Self { root, entries })
+    }
 }
 
 impl std::fmt::Display for StateManagerError {
@@ -66,6 +308,7 @@ impl std::fmt::Display for StateManagerError {
             StateManagerError::ApplyBlockFailed(msg) => write!(f, "Apply block failed: {}", msg),
             StateManagerError::RestoreFailed(msg) => write!(f, "Restore failed: {}", msg),
             StateManagerError::CryptographicError(msg) => write!(f, "Cryptographic error: {}", msg),
+            StateManagerError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
             StateManagerError::SupplyCapExceeded(msg) => write!(f, "Supply cap exceeded: {}", msg),
             StateManagerError::BurnAddressViolation(msg) => write!(f, "Burn address violation: {}", msg),
         }

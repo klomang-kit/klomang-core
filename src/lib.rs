@@ -129,10 +129,12 @@ pub use core::consensus::emission::{COIN_UNIT, MAX_SUPPLY, block_reward};
 pub use core::daa::difficulty::Daa;
 pub use core::pow::Pow;
 pub use core::crypto::verkle::{VerkleTree, VerkleProof};
+pub use core::state::v_trie::VerkleMultiProof;
 pub use core::crypto::schnorr::verify_block_signature;
 pub use core::mempool::{Mempool, MempoolError, SignedTransaction, TransactionID};
-pub use core::state_manager::StateManager;
+pub use core::state_manager::{StateManager, ExecutionWitness, ExecutionWitnessEntry, GasFeeWitness};
 pub use core::state_manager::BlockUndo;
+pub use core::vm::executor::VMExecutor;
 
 // Re-export modules for direct access
 pub use core::{mempool, state, consensus, crypto, dag, state_manager};
